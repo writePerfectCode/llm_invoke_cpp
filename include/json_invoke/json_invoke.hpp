@@ -1,0 +1,832 @@
+#pragma once
+
+#include <any>
+#include <functional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <typeindex>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+#include <nlohmann/json.hpp>
+#include "../func_registry/func_registry.hpp"
+#include "json_traits.hpp"
+
+namespace json_invoke {
+
+using json = nlohmann::json;
+using func_registry::BasicFuncRegistry;
+using func_registry::FuncCallResult;
+using func_registry::FunctionInfo;
+using func_registry::ToolParameterSpec;
+using func_registry::ToolSpec;
+
+class JsonInvokeError : public std::runtime_error {
+public:
+    JsonInvokeError(std::string code, std::string message)
+        : std::runtime_error(std::move(message)), code_(std::move(code))
+    {
+    }
+
+    const std::string& code() const noexcept
+    {
+        return code_;
+    }
+
+private:
+    std::string code_;
+};
+
+namespace detail {
+
+inline void ensureSuccessfulResponse(const json& response)
+{
+    auto ok_it = response.find("ok");
+    if (ok_it != response.end() && ok_it->is_boolean() && ok_it->get<bool>())
+    {
+        return;
+    }
+
+    auto error_it = response.find("error");
+    if (error_it != response.end() && error_it->is_object())
+    {
+        const std::string code = error_it->value("code", "unknown_error");
+        const std::string message = error_it->value("message", "request failed");
+        throw JsonInvokeError(code, message);
+    }
+
+    throw JsonInvokeError("invalid_response", "response is missing a successful result state");
+}
+
+inline const json& responseValue(const json& response)
+{
+    ensureSuccessfulResponse(response);
+
+    auto value_it = response.find("value");
+    if (value_it == response.end())
+    {
+        throw JsonInvokeError("invalid_response", "successful response does not contain a 'value' field");
+    }
+
+    return *value_it;
+}
+
+} // namespace detail
+
+class JsonInvokeResult {
+public:
+    explicit JsonInvokeResult(json response)
+        : response_(std::move(response))
+    {
+    }
+
+    const json& response() const noexcept
+    {
+        return response_;
+    }
+
+    std::string dump(
+        int indent = -1,
+        char indent_char = ' ',
+        bool ensure_ascii = false,
+        json::error_handler_t error_handler = json::error_handler_t::strict) const
+    {
+        return response_.dump(indent, indent_char, ensure_ascii, error_handler);
+    }
+
+    template<typename T>
+    T as() const
+    {
+        try
+        {
+            if constexpr (std::is_same_v<std::remove_cvref_t<T>, json>)
+            {
+                return detail::responseValue(response_);
+            }
+
+            return detail::responseValue(response_).template get<T>();
+        }
+        catch (const JsonInvokeError&)
+        {
+            throw;
+        }
+        catch (const std::exception& e)
+        {
+            throw JsonInvokeError("conversion_failed", "failed to convert response value: " + std::string(e.what()));
+        }
+    }
+
+    template<typename T>
+    operator T() const
+    {
+        return as<T>();
+    }
+
+    operator json() const
+    {
+        return as<json>();
+    }
+
+private:
+    json response_;
+};
+
+} // namespace json_invoke
+
+namespace nlohmann {
+
+template<>
+struct adl_serializer<json_invoke::JsonInvokeResult> {
+    static void to_json(json& value, const json_invoke::JsonInvokeResult& result)
+    {
+        value = result.as<json_invoke::json>();
+    }
+};
+
+} // namespace nlohmann
+
+namespace json_invoke {
+
+class JsonTypeRegistry {
+public:
+    JsonTypeRegistry() = default;
+
+    static JsonTypeRegistry makeDefault()
+    {
+        JsonTypeRegistry registry;
+        registry.registerType<bool>();
+        registry.registerType<short>();
+        registry.registerType<unsigned short>();
+        registry.registerType<int>();
+        registry.registerType<unsigned int>();
+        registry.registerType<long>();
+        registry.registerType<unsigned long>();
+        registry.registerType<long long>();
+        registry.registerType<unsigned long long>();
+        registry.registerType<float>();
+        registry.registerType<double>();
+        registry.registerType<long double>();
+        registry.registerType<std::string>();
+        registry.registerType<std::vector<std::string>>();
+        registry.registerType<std::vector<int>>();
+        registry.registerType<std::vector<long long>>();
+        registry.registerType<std::vector<double>>();
+        registry.registerType<std::vector<bool>>();
+        registry.registerType<std::tuple<std::string, int>>();
+        return registry;
+    }
+
+    template<typename T>
+    void registerType()
+    {
+        if constexpr (!std::is_void_v<T>)
+        {
+            if constexpr (detail::has_json_traits_v<T>)
+            {
+                registerType<T>(
+                    [](const json& value) -> T {
+                        return json_traits<T>::from_json_value(value);
+                    },
+                    [](const T& value) -> json {
+                        return json_traits<T>::to_json_value(value);
+                    });
+            }
+            else
+            {
+                registerType<T>(
+                    [](const json& value) -> T {
+                        return value.get<T>();
+                    },
+                    [](const T& value) -> json {
+                        return json(value);
+                    });
+            }
+        }
+    }
+
+    template<typename T, typename FromJson, typename ToJson>
+    void registerType(FromJson&& from_json, ToJson&& to_json)
+    {
+        if constexpr (!std::is_void_v<T>)
+        {
+            from_json_[typeid(T)] = [converter = std::forward<FromJson>(from_json)](const json& value) -> std::any {
+                return std::any(converter(value));
+            };
+
+            to_json_[typeid(T)] = [converter = std::forward<ToJson>(to_json)](const std::any& value) -> json {
+                return converter(std::any_cast<const T&>(value));
+            };
+        }
+    }
+
+    std::any fromJson(const json& value, std::type_index expected_type) const
+    {
+        if (expected_type == typeid(void))
+        {
+            if (!value.is_null())
+            {
+                throw JsonInvokeError("conversion_failed", "void type expects null JSON");
+            }
+            return std::any{};
+        }
+
+        const auto it = from_json_.find(expected_type);
+        if (it == from_json_.end())
+        {
+            throw JsonInvokeError(
+                "unsupported_type",
+                "JSON input conversion is not registered for C++ type '" + std::string(expected_type.name()) + "'");
+        }
+
+        try
+        {
+            return it->second(value);
+        }
+        catch (const JsonInvokeError&)
+        {
+            throw;
+        }
+        catch (const std::exception& e)
+        {
+            throw JsonInvokeError(
+                "conversion_failed",
+                "JSON input conversion failed for C++ type '" + std::string(expected_type.name()) + "': " + e.what());
+        }
+    }
+
+    json toJson(const std::any& value, std::type_index actual_type) const
+    {
+        if (actual_type == typeid(void) || !value.has_value())
+        {
+            return nullptr;
+        }
+
+        const auto it = to_json_.find(actual_type);
+        if (it == to_json_.end())
+        {
+            throw JsonInvokeError(
+                "unsupported_type",
+                "JSON output conversion is not registered for C++ type '" + std::string(actual_type.name()) + "'");
+        }
+
+        try
+        {
+            return it->second(value);
+        }
+        catch (const JsonInvokeError&)
+        {
+            throw;
+        }
+        catch (const std::exception& e)
+        {
+            throw JsonInvokeError(
+                "conversion_failed",
+                "JSON output conversion failed for C++ type '" + std::string(actual_type.name()) + "': " + e.what());
+        }
+    }
+
+    bool canRead(std::type_index expected_type) const noexcept
+    {
+        return expected_type == typeid(void) || from_json_.find(expected_type) != from_json_.end();
+    }
+
+    bool canWrite(std::type_index actual_type) const noexcept
+    {
+        return actual_type == typeid(void) || to_json_.find(actual_type) != to_json_.end();
+    }
+
+private:
+    using FromJsonFn = std::function<std::any(const json&)>;
+    using ToJsonFn = std::function<json(const std::any&)>;
+
+    std::unordered_map<std::type_index, FromJsonFn> from_json_;
+    std::unordered_map<std::type_index, ToJsonFn> to_json_;
+};
+
+inline json toolParameterSpecToJson(const ToolParameterSpec& spec)
+{
+    return json{
+        {"name", spec.name},
+        {"cpp_type_name", spec.cpp_type_name},
+        {"llm_type", spec.llm_type},
+        {"required", spec.required},
+    };
+}
+
+inline json toolSpecToJson(const ToolSpec& spec)
+{
+    json parameters = json::array();
+    for (const auto& parameter : spec.parameters)
+    {
+        parameters.push_back(toolParameterSpecToJson(parameter));
+    }
+
+    return json{
+        {"tool_name", spec.tool_name},
+        {"function_name", spec.function_name},
+        {"prototype", spec.prototype},
+        {"description", spec.description},
+        {"parameters", std::move(parameters)},
+        {"return_cpp_type_name", spec.return_cpp_type_name},
+        {"return_llm_type", spec.return_llm_type},
+    };
+}
+
+inline std::string jsonSchemaType(std::string_view llm_type)
+{
+    if (llm_type == "string" || llm_type == "integer" || llm_type == "number" ||
+        llm_type == "boolean" || llm_type == "array" || llm_type == "object")
+    {
+        return std::string(llm_type);
+    }
+
+    return "string";
+}
+
+inline json toolSchemaToJson(const ToolSpec& spec)
+{
+    json properties = json::object();
+    json required = json::array();
+
+    for (const auto& parameter : spec.parameters)
+    {
+        properties[parameter.name] = {
+            {"type", jsonSchemaType(parameter.llm_type)},
+            {"description", "C++ type: " + parameter.cpp_type_name},
+            {"x-cpp-type", parameter.cpp_type_name},
+            {"x-llm-type", parameter.llm_type},
+        };
+
+        if (parameter.required)
+        {
+            required.push_back(parameter.name);
+        }
+    }
+
+    return json{
+        {"type", "function"},
+        {"function", {
+            {"name", spec.tool_name},
+            {"description", spec.description.empty() ? spec.prototype : spec.description},
+            {"parameters", {
+                {"type", "object"},
+                {"properties", std::move(properties)},
+                {"required", std::move(required)},
+                {"additionalProperties", false},
+            }},
+            {"strict", true},
+            {"x-prototype", spec.prototype},
+            {"x-return", {
+                {"cpp_type_name", spec.return_cpp_type_name},
+                {"llm_type", spec.return_llm_type},
+            }},
+        }},
+    };
+}
+
+template<bool EnableThreadSafety = false>
+class BasicJsonInvokeAdapter {
+public:
+    using MapType = BasicFuncRegistry<EnableThreadSafety>;
+
+    explicit BasicJsonInvokeAdapter(MapType& func_registry)
+        : func_registry_(func_registry), registry_(JsonTypeRegistry::makeDefault())
+    {
+    }
+
+    JsonTypeRegistry& registry() noexcept
+    {
+        return registry_;
+    }
+
+    const JsonTypeRegistry& registry() const noexcept
+    {
+        return registry_;
+    }
+
+    template<typename T>
+    void registerType()
+    {
+        registry_.template registerType<T>();
+    }
+
+    template<typename T, typename FromJson, typename ToJson>
+    void registerType(FromJson&& from_json, ToJson&& to_json)
+    {
+        registry_.template registerType<T>(std::forward<FromJson>(from_json), std::forward<ToJson>(to_json));
+    }
+
+    json getToolSpecJson(const std::string& name) const
+    {
+        try
+        {
+            return toolSpecToJson(func_registry_.getToolSpec(name));
+        }
+        catch (const std::exception& e)
+        {
+            throw JsonInvokeError("function_not_found", e.what());
+        }
+    }
+
+    json getAllToolSpecsJson() const
+    {
+        json tools = json::array();
+        for (const auto& spec : func_registry_.getAllToolSpecs())
+        {
+            tools.push_back(toolSpecToJson(spec));
+        }
+        return tools;
+    }
+
+    json getToolSchemaJson(const std::string& name) const
+    {
+        FunctionInfo info = getFunctionInfo(name);
+        ensureJsonCallable(info);
+        return toolSchemaToJson(func_registry_.getToolSpec(name));
+    }
+
+    json getAllToolSchemasJson() const
+    {
+        json tools = json::array();
+        for (const auto& info : func_registry_.getAllFunctionInfos())
+        {
+            if (!isJsonCallable(info))
+            {
+                continue;
+            }
+
+            tools.push_back(toolSchemaToJson(func_registry_.getToolSpec(info.name)));
+        }
+        return tools;
+    }
+
+    json invokeJson(const json& request) const
+    {
+        std::string name;
+
+        try
+        {
+            const json& request_object = requireRequestObject(request);
+            name = extractFunctionName(request_object);
+            FunctionInfo info = getFunctionInfo(name);
+            ensureJsonCallable(info);
+            std::vector<std::any> packed_args = packArgsFromJson(info, extractArgsNode(request_object));
+            FuncCallResult result = call(name, packed_args);
+
+            return json{
+                {"ok", true},
+                {"name", name},
+                {"return_cpp_type_name", info.ret_type_name},
+                {"return_llm_type", info.ret_llm_type},
+                {"value", registry_.toJson(result.any(), result.declaredReturnType())},
+            };
+        }
+        catch (const JsonInvokeError& e)
+        {
+            return makeErrorResponse(name, e.code(), e.what());
+        }
+        catch (const std::exception& e)
+        {
+            return makeErrorResponse(name, "unknown_error", e.what());
+        }
+    }
+
+    JsonInvokeResult invoke(const json& request) const
+    {
+        return JsonInvokeResult(invokeJson(request));
+    }
+
+    template<typename T>
+    T invoke(const json& request) const
+    {
+        return invoke(request).template as<T>();
+    }
+
+    std::string invokeText(std::string_view request_text, int indent = 2) const
+    {
+        try
+        {
+            json request = json::parse(request_text.begin(), request_text.end());
+            return invokeJson(request).dump(indent);
+        }
+        catch (const json::parse_error& e)
+        {
+            return makeErrorResponse("", "invalid_json", e.what()).dump(indent);
+        }
+        catch (const JsonInvokeError& e)
+        {
+            return makeErrorResponse("", e.code(), e.what()).dump(indent);
+        }
+        catch (const std::exception& e)
+        {
+            return makeErrorResponse("", "unknown_error", e.what()).dump(indent);
+        }
+    }
+
+private:
+    static const json& requireRequestObject(const json& request)
+    {
+        if (!request.is_object())
+        {
+            throw JsonInvokeError("invalid_request", "request must be a JSON object");
+        }
+        return request;
+    }
+
+    static std::string extractFunctionName(const json& request)
+    {
+        static constexpr std::string_view name_fields[] = {"name", "tool_name", "function_name"};
+
+        for (std::string_view field : name_fields)
+        {
+            auto it = request.find(std::string(field));
+            if (it == request.end())
+            {
+                continue;
+            }
+
+            if (!it->is_string())
+            {
+                throw JsonInvokeError("invalid_request", "field '" + std::string(field) + "' must be a string");
+            }
+
+            return it->get<std::string>();
+        }
+
+        auto function_it = request.find("function");
+        if (function_it != request.end())
+        {
+            if (!function_it->is_object())
+            {
+                throw JsonInvokeError("invalid_request", "field 'function' must be an object");
+            }
+
+            auto name_it = function_it->find("name");
+            if (name_it == function_it->end())
+            {
+                throw JsonInvokeError("invalid_request", "field 'function.name' is required");
+            }
+
+            if (!name_it->is_string())
+            {
+                throw JsonInvokeError("invalid_request", "field 'function.name' must be a string");
+            }
+
+            return name_it->get<std::string>();
+        }
+
+        throw JsonInvokeError("invalid_request", "request must contain a string field 'name'");
+    }
+
+    static json parseArgumentsString(std::string_view raw)
+    {
+        try
+        {
+            return json::parse(raw.begin(), raw.end());
+        }
+        catch (const json::parse_error& e)
+        {
+            throw JsonInvokeError("invalid_request", "tool arguments string is not valid JSON: " + std::string(e.what()));
+        }
+    }
+
+    static json normalizeArgsNode(const json& value)
+    {
+        if (value.is_string())
+        {
+            return parseArgumentsString(value.get_ref<const std::string&>());
+        }
+
+        return value;
+    }
+
+    static json extractArgsNode(const json& request)
+    {
+        auto args_it = request.find("args");
+        if (args_it != request.end())
+        {
+            return normalizeArgsNode(*args_it);
+        }
+
+        auto arguments_it = request.find("arguments");
+        if (arguments_it != request.end())
+        {
+            return normalizeArgsNode(*arguments_it);
+        }
+
+        auto function_it = request.find("function");
+        if (function_it != request.end())
+        {
+            if (!function_it->is_object())
+            {
+                throw JsonInvokeError("invalid_request", "field 'function' must be an object");
+            }
+
+            auto function_args_it = function_it->find("arguments");
+            if (function_args_it != function_it->end())
+            {
+                return normalizeArgsNode(*function_args_it);
+            }
+
+            auto function_plain_args_it = function_it->find("args");
+            if (function_plain_args_it != function_it->end())
+            {
+                return normalizeArgsNode(*function_plain_args_it);
+            }
+        }
+
+        return json::array();
+    }
+
+    FunctionInfo getFunctionInfo(const std::string& name) const
+    {
+        try
+        {
+            return func_registry_.getFunctionInfo(name);
+        }
+        catch (const std::exception& e)
+        {
+            throw JsonInvokeError("function_not_found", e.what());
+        }
+    }
+
+    FuncCallResult call(const std::string& name, const std::vector<std::any>& args) const
+    {
+        try
+        {
+            return func_registry_.callByNameWrap(name, args);
+        }
+        catch (const std::exception& e)
+        {
+            throw JsonInvokeError("call_failed", e.what());
+        }
+    }
+
+    bool isJsonCallable(const FunctionInfo& info) const
+    {
+        for (const auto& arg_type : info.arg_types)
+        {
+            if (!registry_.canRead(arg_type))
+            {
+                return false;
+            }
+        }
+
+        return registry_.canWrite(info.ret_type);
+    }
+
+    void ensureJsonCallable(const FunctionInfo& info) const
+    {
+        for (std::size_t index = 0; index < info.arg_types.size(); ++index)
+        {
+            if (!registry_.canRead(info.arg_types[index]))
+            {
+                throw JsonInvokeError(
+                    "unsupported_type",
+                    "argument " + std::to_string(index) + " ('" + argumentLabel(info, index) + "') uses unsupported C++ type '" +
+                    std::string(info.arg_types[index].name()) + "' for JSON input conversion");
+            }
+        }
+
+        if (!registry_.canWrite(info.ret_type))
+        {
+            throw JsonInvokeError(
+                "unsupported_type",
+                "return type '" + std::string(info.ret_type.name()) + "' is not registered for JSON output conversion");
+        }
+    }
+
+    std::vector<std::any> packArgsFromJson(const FunctionInfo& info, const json& args) const
+    {
+        if (args.is_array())
+        {
+            return packPositionalArgs(info, args);
+        }
+
+        if (args.is_object())
+        {
+            return packNamedArgs(info, args);
+        }
+
+        if (args.is_null() && info.arg_types.empty())
+        {
+            return {};
+        }
+
+        throw JsonInvokeError("invalid_request", "field 'args' must be an array or object");
+    }
+
+    std::vector<std::any> packPositionalArgs(const FunctionInfo& info, const json& args) const
+    {
+        if (args.size() != info.arg_types.size())
+        {
+            throw JsonInvokeError(
+                "invalid_request",
+                "argument count mismatch: expected " + std::to_string(info.arg_types.size()) +
+                ", got " + std::to_string(args.size()));
+        }
+
+        std::vector<std::any> packed;
+        packed.reserve(info.arg_types.size());
+        for (std::size_t index = 0; index < info.arg_types.size(); ++index)
+        {
+            packed.push_back(convertArgument(args[index], info.arg_types[index], index, argumentLabel(info, index)));
+        }
+
+        return packed;
+    }
+
+    std::vector<std::any> packNamedArgs(const FunctionInfo& info, const json& args) const
+    {
+        if (!args.is_object())
+        {
+            throw JsonInvokeError("invalid_request", "named JSON arguments must be a JSON object");
+        }
+
+        for (auto it = args.begin(); it != args.end(); ++it)
+        {
+            bool known = false;
+            for (std::size_t index = 0; index < info.arg_types.size(); ++index)
+            {
+                if (it.key() == argumentLabel(info, index))
+                {
+                    known = true;
+                    break;
+                }
+            }
+
+            if (!known)
+            {
+                throw JsonInvokeError("invalid_request", "unexpected JSON argument '" + it.key() + "'");
+            }
+        }
+
+        std::vector<std::any> packed;
+        packed.reserve(info.arg_types.size());
+        for (std::size_t index = 0; index < info.arg_types.size(); ++index)
+        {
+            const std::string parameter_name = argumentLabel(info, index);
+
+            auto it = args.find(parameter_name);
+            if (it == args.end())
+            {
+                throw JsonInvokeError(
+                    "invalid_request",
+                    "missing JSON argument for parameter '" + parameter_name + "'");
+            }
+
+            packed.push_back(convertArgument(*it, info.arg_types[index], index, parameter_name));
+        }
+
+        return packed;
+    }
+
+    std::any convertArgument(const json& value, std::type_index expected_type, std::size_t index, const std::string& label) const
+    {
+        try
+        {
+            return registry_.fromJson(value, expected_type);
+        }
+        catch (const JsonInvokeError& e)
+        {
+            throw JsonInvokeError(e.code(), "argument " + std::to_string(index) + " ('" + label + "'): " + e.what());
+        }
+    }
+
+    static std::string argumentLabel(const FunctionInfo& info, std::size_t index)
+    {
+        if (index < info.param_names.size() && !info.param_names[index].empty())
+        {
+            return info.param_names[index];
+        }
+        return "arg" + std::to_string(index);
+    }
+
+    static json makeErrorResponse(std::string_view name, std::string_view code, std::string_view message)
+    {
+        json response{
+            {"ok", false},
+            {"error", {
+                {"code", code},
+                {"message", message},
+            }},
+        };
+
+        if (!name.empty())
+        {
+            response["name"] = name;
+        }
+
+        return response;
+    }
+
+    MapType& func_registry_;
+    JsonTypeRegistry registry_;
+};
+
+using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;
+using JsonInvokeAdapterThreadSafe = BasicJsonInvokeAdapter<true>;
+
+} // namespace json_invoke
