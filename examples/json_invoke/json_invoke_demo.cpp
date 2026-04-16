@@ -68,12 +68,11 @@ int main()
     json_invoke::json descriptionJson = adapter.invoke(descriptionRequest);
     std::cout << descriptionJson.dump(2) << std::endl;
 
-    /*
     std::cout << "\n--- Tool specs JSON ---" << std::endl;
     std::cout << adapter.getAllToolSpecsJson().dump(2) << std::endl;
 
     std::cout << "\n--- Tool schemas JSON ---" << std::endl;
     std::cout << adapter.getAllToolSchemasJson().dump(2) << std::endl;
-    */
+    
     return 0;
 }

@@ -22,6 +22,10 @@ using func_registry::FuncCallResult;
 using func_registry::FunctionInfo;
 using func_registry::ToolParameterSpec;
 using func_registry::ToolSpec;
+using func_registry::getAllFunctionInfos;
+using func_registry::getAllToolSpecs;
+using func_registry::getFunctionInfo;
+using func_registry::getToolSpec;
 
 class JsonInvokeError : public std::runtime_error {
 public:
@@ -422,7 +426,7 @@ public:
     {
         try
         {
-            return toolSpecToJson(func_registry_.getToolSpec(name));
+            return toolSpecToJson(getToolSpec(func_registry_, name));
         }
         catch (const std::exception& e)
         {
@@ -433,7 +437,7 @@ public:
     json getAllToolSpecsJson() const
     {
         json tools = json::array();
-        for (const auto& spec : func_registry_.getAllToolSpecs())
+        for (const auto& spec : getAllToolSpecs(func_registry_))
         {
             tools.push_back(toolSpecToJson(spec));
         }
@@ -444,20 +448,20 @@ public:
     {
         FunctionInfo info = getFunctionInfo(name);
         ensureJsonCallable(info);
-        return toolSchemaToJson(func_registry_.getToolSpec(name));
+        return toolSchemaToJson(func_registry::getToolSpec(func_registry_, name));
     }
 
     json getAllToolSchemasJson() const
     {
         json tools = json::array();
-        for (const auto& info : func_registry_.getAllFunctionInfos())
+        for (const auto& info : getAllFunctionInfos(func_registry_))
         {
             if (!isJsonCallable(info))
             {
                 continue;
             }
 
-            tools.push_back(toolSchemaToJson(func_registry_.getToolSpec(info.name)));
+            tools.push_back(toolSchemaToJson(func_registry::getToolSpec(func_registry_, info.name)));
         }
         return tools;
     }
@@ -644,7 +648,7 @@ private:
     {
         try
         {
-            return func_registry_.getFunctionInfo(name);
+            return func_registry::getFunctionInfo(func_registry_, name);
         }
         catch (const std::exception& e)
         {

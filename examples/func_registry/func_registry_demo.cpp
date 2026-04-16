@@ -72,13 +72,13 @@ int main()
     std::cout << "Repeated text: " << repeated_text << std::endl;
 
     std::cout << "\n--- Registered prototypes ---" << std::endl;
-    for (const auto& summary : registry.describeAllFunctions())
+    for (const auto& summary : func_registry::describeAllFunctions(registry))
     {
         std::cout << summary << std::endl;
     }
 
     std::cout << "\n--- Tool specs ---" << std::endl;
-    std::cout << registry.renderAllToolSpecs() << std::endl;
+    std::cout << func_registry::renderAllToolSpecs(registry) << std::endl;
 
     return 0;
 }

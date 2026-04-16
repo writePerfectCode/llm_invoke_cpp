@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #include "any_callable.hpp"
+#include "introspection.hpp"
 #include "call_result.hpp"
 
 namespace func_registry {
@@ -31,35 +32,6 @@ struct FunctionMetadata {
     std::string description;
 };
 
-struct FunctionInfo {
-    std::string name;
-    std::type_index ret_type{typeid(void)};
-    std::string ret_type_name;
-    std::string ret_llm_type;
-    std::vector<std::type_index> arg_types;
-    std::vector<std::string> arg_type_names;
-    std::vector<std::string> arg_llm_types;
-    std::vector<std::string> param_names;
-    std::string description;
-};
-
-struct ToolParameterSpec {
-    std::string name;
-    std::string cpp_type_name;
-    std::string llm_type;
-    bool required{true};
-};
-
-struct ToolSpec {
-    std::string tool_name;
-    std::string function_name;
-    std::string prototype;
-    std::string description;
-    std::vector<ToolParameterSpec> parameters;
-    std::string return_cpp_type_name;
-    std::string return_llm_type;
-};
-
 template<typename... Args>
 inline constexpr bool is_packed_any_arg_v =
     sizeof...(Args) == 1 &&
@@ -74,6 +46,7 @@ public:
         {
             throw std::runtime_error("function already registered: " + name);
         }
+        ac.name = name;
         tools_.emplace(name, std::move(ac));
     }
 
@@ -135,58 +108,7 @@ public:
         return it->second;
     }
 
-    FunctionInfo getFunctionInfo(const std::string& name) const {
-        std::shared_lock<mutex_type> lock(mutex_);
-        auto it = tools_.find(name);
-        if (it == tools_.end())
-        {
-            throw std::runtime_error("function not found: " + name);
-        }
-        return makeFunctionInfo(name, it->second);
-    }
-
-    std::string describeFunction(const std::string& name) const {
-        return formatFunctionInfo(getFunctionInfo(name));
-    }
-
-    std::vector<FunctionInfo> getAllFunctionInfos() const {
-        std::shared_lock<mutex_type> lock(mutex_);
-
-        std::vector<FunctionInfo> infos;
-        infos.reserve(tools_.size());
-        for (const auto& entry : tools_)
-        {
-            infos.push_back(makeFunctionInfo(entry.first, entry.second));
-        }
-
-        std::stable_sort(infos.begin(), infos.end(), compareFunctionInfo);
-
-        return infos;
-    }
-
-    std::vector<std::string> describeAllFunctions() const {
-        std::vector<FunctionInfo> infos = getAllFunctionInfos();
-        std::vector<std::string> descriptions;
-        descriptions.reserve(infos.size());
-        for (const auto& info : infos)
-        {
-            descriptions.push_back(formatFunctionInfo(info));
-        }
-        return descriptions;
-    }
-
-    ToolSpec getToolSpec(const std::string& name) const {
-        return makeToolSpec(getFunctionInfo(name));
-    }
-
-    std::vector<ToolSpec> getAllToolSpecs() const {
-        return makeToolSpecs(getAllFunctionInfos());
-    }
-
-    std::string renderAllToolSpecs(std::string_view separator = "\n") const {
-        return joinLines(formatToolSpecs(getAllToolSpecs()), separator);
-    }
-
+    // Use this overload when arguments are already packed, such as JSON or other dynamic bridges.
     std::any callByName(const std::string& name, const std::vector<std::any>& args) const
     {
         try
@@ -200,49 +122,7 @@ public:
         }
     }
 
-    FuncCallResult callByNameWrap(const std::string& name, const std::vector<std::any>& args) const
-    {
-        try
-        {
-            AnyCallable callable = getFunction(name);
-            std::any result = callable.fn(args);
-            return FuncCallResult(std::move(result), callable.ret_type);
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error("call failed: " + name + ": " + e.what());
-        }
-    }
-
-    template<typename R>
-    R callByNameAs(const std::string& name, const std::vector<std::any>& args) const
-    {
-        try
-        {
-            AnyCallable callable = getFunction(name);
-            std::any result = callable.fn(args);
-            return cast_result<R>(callable, result);
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error("call failed: " + name + ": " + e.what());
-        }
-    }
-
-    std::tuple<std::any, std::type_index> callByNameWithRetType(const std::string& name, const std::vector<std::any>& args) const
-    {
-        try
-        {
-            AnyCallable callable = getFunction(name);
-            std::any result = callable.fn(args);
-            return {std::move(result), callable.ret_type};
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error("call failed: " + name + ": " + e.what());
-        }
-    }
-
+    // Use this overload for direct C++ calls; the registry validates and packs native arguments for you.
     template<typename... Args>
     requires (!is_packed_any_arg_v<Args...>)
     std::any callByName(const std::string& name, Args&&... args) const
@@ -259,6 +139,22 @@ public:
         }
     }
 
+    // Returns FuncCallResult when callers need both the value and the declared return type.
+    FuncCallResult callByNameWrap(const std::string& name, const std::vector<std::any>& args) const
+    {
+        try
+        {
+            AnyCallable callable = getFunction(name);
+            std::any result = callable.fn(args);
+            return FuncCallResult(std::move(result), callable.ret_type);
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error("call failed: " + name + ": " + e.what());
+        }
+    }
+
+    // Native-argument variant of callByNameWrap for typed C++ call sites that still need runtime type metadata.
     template<typename... Args>
     requires (!is_packed_any_arg_v<Args...>)
     FuncCallResult callByNameWrap(const std::string& name, Args&&... args) const
@@ -276,6 +172,23 @@ public:
         }
     }
 
+    // Use this overload when arguments are already packed and the caller expects a concrete return type R.
+    template<typename R>
+    R callByNameAs(const std::string& name, const std::vector<std::any>& args) const
+    {
+        try
+        {
+            AnyCallable callable = getFunction(name);
+            std::any result = callable.fn(args);
+            return cast_result<R>(callable, result);
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error("call failed: " + name + ": " + e.what());
+        }
+    }
+
+    // Native-argument variant of callByNameAs; useful for direct C++ calls that want checked typed results.
     template<typename R, typename... Args>
     requires (!is_packed_any_arg_v<Args...>)
     R callByNameAs(const std::string& name, Args&&... args) const
@@ -293,26 +206,14 @@ public:
         }
     }
 
-    template<typename... Args>
-    requires (!is_packed_any_arg_v<Args...>)
-    std::tuple<std::any, std::type_index> callByNameWithRetType(const std::string& name, Args&&... args) const
+    template<typename Visitor>
+    void forEachFunction(Visitor&& visitor) const
     {
-        try
-        {
-            AnyCallable callable = resolveCallable(name, std::forward<Args>(args)...);
-            std::vector<std::any> packed = packArgs(callable.arg_types, std::forward<Args>(args)...);
-            std::any result = callable.fn(packed);
-            return {std::move(result), callable.ret_type};
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error("call failed: " + name + ": " + e.what());
-        }
-    }
-
-    bool hasFunction(const std::string& name) const {
         std::shared_lock<mutex_type> lock(mutex_);
-        return tools_.find(name) != tools_.end();
+        for (const auto& entry : tools_)
+        {
+            visitor(entry.first, entry.second);
+        }
     }
 
 private:
@@ -329,181 +230,6 @@ private:
 
         callable.param_names = std::move(metadata.param_names);
         callable.description = std::move(metadata.description);
-    }
-
-    static FunctionInfo makeFunctionInfo(const std::string& name, const AnyCallable& callable)
-    {
-        return FunctionInfo{
-            name,
-            callable.ret_type,
-            callable.ret_type_name,
-            callable.ret_llm_type,
-            callable.arg_types,
-            callable.arg_type_names,
-            callable.arg_llm_types,
-            callable.param_names,
-            callable.description,
-        };
-    }
-
-    static ToolParameterSpec makeToolParameterSpec(const FunctionInfo& info, std::size_t index)
-    {
-        ToolParameterSpec spec;
-        spec.name = (index < info.param_names.size() && !info.param_names[index].empty())
-            ? info.param_names[index]
-            : "arg" + std::to_string(index);
-        spec.cpp_type_name = index < info.arg_type_names.size() ? info.arg_type_names[index] : std::string("<unknown>");
-        spec.llm_type = index < info.arg_llm_types.size() ? info.arg_llm_types[index] : std::string("unknown");
-        return spec;
-    }
-
-    static ToolSpec makeToolSpec(const FunctionInfo& info, const std::string& tool_name)
-    {
-        ToolSpec spec;
-        spec.tool_name = tool_name;
-        spec.function_name = info.name;
-        spec.prototype = formatFunctionInfo(info);
-        spec.description = info.description;
-        spec.return_cpp_type_name = info.ret_type_name;
-        spec.return_llm_type = info.ret_llm_type.empty() ? std::string("unknown") : info.ret_llm_type;
-        spec.parameters.reserve(info.arg_type_names.size());
-
-        for (std::size_t i = 0; i < info.arg_type_names.size(); ++i)
-        {
-            spec.parameters.push_back(makeToolParameterSpec(info, i));
-        }
-
-        return spec;
-    }
-
-    static ToolSpec makeToolSpec(const FunctionInfo& info)
-    {
-        return makeToolSpec(info, info.name);
-    }
-
-    static bool compareFunctionInfo(const FunctionInfo& lhs, const FunctionInfo& rhs)
-    {
-        if (lhs.name != rhs.name)
-        {
-            return lhs.name < rhs.name;
-        }
-        return lhs.arg_type_names.size() < rhs.arg_type_names.size();
-    }
-
-    static std::vector<ToolSpec> makeToolSpecs(const std::vector<FunctionInfo>& infos)
-    {
-        std::vector<ToolSpec> specs;
-        specs.reserve(infos.size());
-
-        for (const auto& info : infos)
-        {
-            specs.push_back(makeToolSpec(info));
-        }
-
-        return specs;
-    }
-
-    static std::string formatToolSpec(const ToolSpec& tool)
-    {
-        std::string out = tool.tool_name;
-        out += " => ";
-
-        if (tool.parameters.empty())
-        {
-            out += "(no args)";
-        }
-        else
-        {
-            for (std::size_t i = 0; i < tool.parameters.size(); ++i)
-            {
-                if (i != 0)
-                {
-                    out += ", ";
-                }
-
-                out += tool.parameters[i].name;
-                out += ": ";
-                out += tool.parameters[i].llm_type;
-                out += " (";
-                out += tool.parameters[i].cpp_type_name;
-                out += ")";
-            }
-        }
-
-        out += " -> ";
-        out += tool.return_llm_type;
-        out += " (";
-        out += tool.return_cpp_type_name;
-        out += ")";
-
-        if (!tool.description.empty())
-        {
-            out += " : ";
-            out += tool.description;
-        }
-
-        return out;
-    }
-
-    static std::vector<std::string> formatToolSpecs(const std::vector<ToolSpec>& tools)
-    {
-        std::vector<std::string> lines;
-        lines.reserve(tools.size());
-        for (const auto& tool : tools)
-        {
-            lines.push_back(formatToolSpec(tool));
-        }
-        return lines;
-    }
-
-    static std::string joinLines(const std::vector<std::string>& lines, std::string_view separator)
-    {
-        std::string out;
-        for (std::size_t i = 0; i < lines.size(); ++i)
-        {
-            if (i != 0)
-            {
-                out += separator;
-            }
-            out += lines[i];
-        }
-        return out;
-    }
-
-    static std::string formatFunctionInfo(const FunctionInfo& info)
-    {
-        std::string out = info.name;
-        out += "(";
-
-        for (std::size_t i = 0; i < info.arg_type_names.size(); ++i)
-        {
-            if (i != 0)
-            {
-                out += ", ";
-            }
-
-            if (i < info.param_names.size() && !info.param_names[i].empty())
-            {
-                out += info.arg_type_names[i];
-                out += " ";
-                out += info.param_names[i];
-            }
-            else
-            {
-                out += info.arg_type_names[i];
-            }
-        }
-
-        out += ") -> ";
-        out += info.ret_type_name.empty() ? std::string("<unknown>") : info.ret_type_name;
-
-        if (!info.description.empty())
-        {
-            out += " : ";
-            out += info.description;
-        }
-
-        return out;
     }
 
     static std::string formatTypeList(const std::vector<std::type_index>& types)

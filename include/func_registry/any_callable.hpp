@@ -17,8 +17,8 @@
 
 namespace func_registry {
 
-struct AnyCallable {
-    std::function<std::any(const std::vector<std::any>&)> fn;
+struct CallableMetadata {
+    std::string name;
     std::type_index ret_type{typeid(void)};
     std::string ret_type_name;
     std::string ret_llm_type;
@@ -27,6 +27,10 @@ struct AnyCallable {
     std::vector<std::string> arg_llm_types;
     std::vector<std::string> param_names;
     std::string description;
+};
+
+struct AnyCallable : CallableMetadata {
+    std::function<std::any(const std::vector<std::any>&)> fn;
 };
 
 namespace any_callable_detail {
