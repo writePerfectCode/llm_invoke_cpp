@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 #include "any_callable.hpp"
-#include "introspection.hpp"
+#include "registry_introspection.hpp"
 #include "call_result.hpp"
 
 namespace func_registry {

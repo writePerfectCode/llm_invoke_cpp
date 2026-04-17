@@ -11,7 +11,8 @@ Project layout
 
 - `include/func_registry/func_registry.hpp`: core function registry entry point.
 - `include/json_invoke/json_invoke.hpp`: JSON invocation adapter.
-- `include/json_invoke/introspection.hpp`: JSON tool/spec/schema export helpers used by the adapter.
+- `include/json_invoke/json_introspection.hpp`: standalone JSON tool/spec/schema export helpers for registry metadata.
+- `include/json_invoke/json_common.hpp`: shared JSON alias and JsonInvokeError definition used by both invoke and introspection layers.
 - `include/json_invoke/json_traits.hpp`: trait hook for custom JSON bindings.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
@@ -97,11 +98,12 @@ API notes
 - `renderAllToolSpecs()`: render prompt-ready tool descriptions.
 - `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
 - `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and lazily auto-register JSON-capable argument and return types.
-- `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
+- `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.
+- `json_invoke::getAllToolSummariesJson(registry)`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
+- `json_invoke::getToolSchemaJson(registry, name)` / `json_invoke::getAllToolSchemasJson(registry)`: emit JSON schemas from registered tool metadata without triggering invocation-time conversion checks.
 - `json_invoke::JsonInvokeAdapter::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.
 - `json_invoke::JsonInvokeAdapter::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
 - `json_invoke::json_traits<T>`: add custom JSON bindings for domain types.
-- `getAllToolSchemasJson()`: emit function schemas from registered tool metadata without triggering invocation-time conversion checks.
 
 Supported request shapes
 

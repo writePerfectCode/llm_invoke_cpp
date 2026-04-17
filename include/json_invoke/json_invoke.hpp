@@ -10,13 +10,13 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <nlohmann/json.hpp>
 #include "../func_registry/func_registry.hpp"
+#include "json_common.hpp"
+#include "json_introspection.hpp"
 #include "json_traits.hpp"
 
 namespace json_invoke {
 
-using json = nlohmann::json;
 using func_registry::AnyCallable;
 using func_registry::BasicFuncRegistry;
 using func_registry::FuncCallResult;
@@ -29,28 +29,6 @@ using func_registry::getFunctionInfo;
 using func_registry::getToolSpec;
 
 class JsonTypeRegistry;
-
-json toolParameterSpecToJson(const ToolParameterSpec& spec);
-json toolSummaryToJson(const ToolSpec& spec);
-json toolSpecToJson(const ToolSpec& spec);
-std::string jsonSchemaType(std::string_view llm_type);
-json toolSchemaToJson(const ToolSpec& spec);
-
-class JsonInvokeError : public std::runtime_error {
-public:
-    JsonInvokeError(std::string code, std::string message)
-        : std::runtime_error(std::move(message)), code_(std::move(code))
-    {
-    }
-
-    const std::string& code() const noexcept
-    {
-        return code_;
-    }
-
-private:
-    std::string code_;
-};
 
 namespace detail {
 
@@ -94,10 +72,7 @@ template<typename T>
 using registered_return_type_t = std::remove_cv_t<std::remove_reference_t<T>>;
 
 template<typename T>
-void register_type_hook(void* registry)
-{
-    static_cast<JsonTypeRegistry*>(registry)->template registerType<T>();
-}
+void register_type_hook(void* registry);
 
 using TypeRegistrationHook = void(*)(void*);
 
@@ -370,6 +345,16 @@ private:
     std::unordered_map<std::type_index, ToJsonFn> to_json_;
 };
 
+namespace detail {
+
+template<typename T>
+void register_type_hook(void* registry)
+{
+    static_cast<JsonTypeRegistry*>(registry)->template registerType<T>();
+}
+
+} // namespace detail
+
 template<bool EnableThreadSafety = false>
 class BasicJsonInvokeAdapter {
 public:
@@ -456,60 +441,6 @@ public:
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
         auto_registration_hooks_[name] = makeSignatureTypeHooks<R(Args...)>();
-    }
-
-    json getToolSpecJson(const std::string& name) const
-    {
-        try
-        {
-            return toolSpecToJson(getToolSpec(func_registry_, name));
-        }
-        catch (const std::exception& e)
-        {
-            throw JsonInvokeError("function_not_found", e.what());
-        }
-    }
-
-    json getAllToolSpecsJson() const
-    {
-        json tools = json::array();
-        for (const auto& spec : getAllToolSpecs(func_registry_))
-        {
-            tools.push_back(toolSpecToJson(spec));
-        }
-        return tools;
-    }
-
-    json getAllToolSummariesJson() const
-    {
-        json tools = json::array();
-        for (const auto& spec : getAllToolSpecs(func_registry_))
-        {
-            tools.push_back(toolSummaryToJson(spec));
-        }
-        return tools;
-    }
-
-    json getToolSchemaJson(const std::string& name) const
-    {
-        try
-        {
-            return toolSchemaToJson(getToolSpec(func_registry_, name));
-        }
-        catch (const std::exception& e)
-        {
-            throw JsonInvokeError("function_not_found", e.what());
-        }
-    }
-
-    json getAllToolSchemasJson() const
-    {
-        json tools = json::array();
-        for (const auto& spec : getAllToolSpecs(func_registry_))
-        {
-            tools.push_back(toolSchemaToJson(spec));
-        }
-        return tools;
     }
 
     json invokeJson(const json& request) const
@@ -935,5 +866,3 @@ using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;
 using JsonInvokeAdapterThreadSafe = BasicJsonInvokeAdapter<true>;
 
 } // namespace json_invoke
-
-#include "introspection.hpp"

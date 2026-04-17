@@ -1,10 +1,14 @@
 #pragma once
 
-#include "json_invoke.hpp"
+#include <string>
+#include <string_view>
+#include <utility>
+#include "json_common.hpp"
+#include "../func_registry/registry_introspection.hpp"
 
 namespace json_invoke {
 
-inline json toolParameterSpecToJson(const ToolParameterSpec& spec)
+inline json toolParameterSpecToJson(const func_registry::ToolParameterSpec& spec)
 {
     return json{
         {"name", spec.name},
@@ -14,7 +18,7 @@ inline json toolParameterSpecToJson(const ToolParameterSpec& spec)
     };
 }
 
-inline json toolSummaryToJson(const ToolSpec& spec)
+inline json toolSummaryToJson(const func_registry::ToolSpec& spec)
 {
     return json{
         {"name", spec.tool_name},
@@ -22,7 +26,7 @@ inline json toolSummaryToJson(const ToolSpec& spec)
     };
 }
 
-inline json toolSpecToJson(const ToolSpec& spec)
+inline json toolSpecToJson(const func_registry::ToolSpec& spec)
 {
     json parameters = json::array();
     for (const auto& parameter : spec.parameters)
@@ -52,7 +56,7 @@ inline std::string jsonSchemaType(std::string_view llm_type)
     return "string";
 }
 
-inline json toolSchemaToJson(const ToolSpec& spec)
+inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
 {
     json properties = json::object();
     json required = json::array();
@@ -91,6 +95,65 @@ inline json toolSchemaToJson(const ToolSpec& spec)
             }},
         }},
     };
+}
+
+template<typename Registry>
+json getToolSpecJson(const Registry& registry, const std::string& name)
+{
+    try
+    {
+        return toolSpecToJson(func_registry::getToolSpec(registry, name));
+    }
+    catch (const std::exception& e)
+    {
+        throw JsonInvokeError("function_not_found", e.what());
+    }
+}
+
+template<typename Registry>
+json getAllToolSpecsJson(const Registry& registry)
+{
+    json tools = json::array();
+    for (const auto& spec : func_registry::getAllToolSpecs(registry))
+    {
+        tools.push_back(toolSpecToJson(spec));
+    }
+    return tools;
+}
+
+template<typename Registry>
+json getAllToolSummariesJson(const Registry& registry)
+{
+    json tools = json::array();
+    for (const auto& spec : func_registry::getAllToolSpecs(registry))
+    {
+        tools.push_back(toolSummaryToJson(spec));
+    }
+    return tools;
+}
+
+template<typename Registry>
+json getToolSchemaJson(const Registry& registry, const std::string& name)
+{
+    try
+    {
+        return toolSchemaToJson(func_registry::getToolSpec(registry, name));
+    }
+    catch (const std::exception& e)
+    {
+        throw JsonInvokeError("function_not_found", e.what());
+    }
+}
+
+template<typename Registry>
+json getAllToolSchemasJson(const Registry& registry)
+{
+    json tools = json::array();
+    for (const auto& spec : func_registry::getAllToolSpecs(registry))
+    {
+        tools.push_back(toolSchemaToJson(spec));
+    }
+    return tools;
 }
 
 } // namespace json_invoke

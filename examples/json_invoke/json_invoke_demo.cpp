@@ -68,10 +68,13 @@ int main()
     std::cout << descriptionJson.dump(2) << std::endl;
 
     std::cout << "\n--- Tool specs JSON ---" << std::endl;
-    std::cout << adapter.getAllToolSpecsJson().dump(2) << std::endl;
+    std::cout << json_invoke::getAllToolSpecsJson(registry).dump(2) << std::endl;
+
+    std::cout << "\n--- Tool summaries JSON ---" << std::endl;
+    std::cout << json_invoke::getAllToolSummariesJson(registry).dump(2) << std::endl;
 
     std::cout << "\n--- Tool schemas JSON ---" << std::endl;
-    std::cout << adapter.getAllToolSchemasJson().dump(2) << std::endl;
+    std::cout << json_invoke::getAllToolSchemasJson(registry).dump(2) << std::endl;
     
     return 0;
 }
