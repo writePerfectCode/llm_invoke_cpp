@@ -7,15 +7,14 @@
 int main()
 {
     func_registry::FuncRegistry registry;
-    registry.registerFunction("add", [](int x, int y) { return x + y; }, "Add two integers.");
-    registry.registerFunction("getPerson", getPerson, "Construct one person.");
-    registry.registerFunction(
+    json_invoke::JsonInvokeAdapter adapter(registry);
+
+    adapter.registerFunction("add", [](int x, int y) { return x + y; }, "Add two integers.");
+    adapter.registerFunction("getPerson", getPerson, "Construct one person.");
+    adapter.registerFunction(
         "describePerson",
         &Person::describe,
         func_registry::FunctionMetadata{{"person"}, "Call Person::describe() for one person."});
-
-    json_invoke::JsonInvokeAdapter adapter(registry);
-    adapter.registerType<Person>();
 
     //#1
     std::cout << "--- Invoke add as int ---" << std::endl;

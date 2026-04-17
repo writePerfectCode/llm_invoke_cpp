@@ -11,6 +11,7 @@ Project layout
 
 - `include/func_registry/func_registry.hpp`: core function registry entry point.
 - `include/json_invoke/json_invoke.hpp`: JSON invocation adapter.
+- `include/json_invoke/introspection.hpp`: JSON tool/spec/schema export helpers used by the adapter.
 - `include/json_invoke/json_traits.hpp`: trait hook for custom JSON bindings.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
@@ -58,10 +59,9 @@ struct json_invoke::json_traits<Person> {
 };
 
 func_registry::FuncRegistry registry;
-registry.registerFunction("get_person", [] { return Person{"Alice", 30}; }, "Return one person.");
 
 json_invoke::JsonInvokeAdapter adapter(registry);
-adapter.registerType<Person>();
+adapter.registerFunction("get_person", [] { return Person{"Alice", 30}; }, "Return one person.");
 std::cout << adapter.invoke({{"name", "get_person"}, {"args", json_invoke::json::array()}}).dump(2) << std::endl;
 ```
 
@@ -96,10 +96,12 @@ API notes
 - `getToolSpec(name)` / `getAllToolSpecs()`: export LLM-friendly tool metadata.
 - `renderAllToolSpecs()`: render prompt-ready tool descriptions.
 - `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
+- `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and lazily auto-register JSON-capable argument and return types.
+- `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
 - `json_invoke::JsonInvokeAdapter::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.
 - `json_invoke::JsonInvokeAdapter::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
 - `json_invoke::json_traits<T>`: add custom JSON bindings for domain types.
-- `getAllToolSchemasJson()`: emit function schemas for tool-calling APIs.
+- `getAllToolSchemasJson()`: emit function schemas from registered tool metadata without triggering invocation-time conversion checks.
 
 Supported request shapes
 
