@@ -97,7 +97,7 @@ API notes
 - `getToolSpec(name)` / `getAllToolSpecs()`: export LLM-friendly tool metadata.
 - `renderAllToolSpecs()`: render prompt-ready tool descriptions.
 - `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
-- `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and lazily auto-register JSON-capable argument and return types.
+- `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
 - `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.
 - `json_invoke::getAllToolSummariesJson(registry)`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
 - `json_invoke::getToolSchemaJson(registry, name)` / `json_invoke::getAllToolSchemasJson(registry)`: emit JSON schemas from registered tool metadata without triggering invocation-time conversion checks.

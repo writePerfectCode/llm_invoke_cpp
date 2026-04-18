@@ -32,20 +32,18 @@ class JsonTypeRegistry;
 
 namespace detail {
 
-template<typename T, typename = void>
-struct has_json_get : std::false_type {};
+template<typename T>
+concept has_json_get = requires(const json& value) {
+    value.template get<T>();
+};
 
 template<typename T>
-struct has_json_get<T, std::void_t<decltype(std::declval<const json&>().template get<T>())>> : std::true_type {};
-
-template<typename T, typename = void>
-struct has_json_constructor : std::false_type {};
-
-template<typename T>
-struct has_json_constructor<T, std::void_t<decltype(json(std::declval<const T&>()))>> : std::true_type {};
+concept has_json_constructor = requires(const T& value) {
+    json(value);
+};
 
 template<typename T>
-inline constexpr bool has_nlohmann_json_binding_v = has_json_get<T>::value && has_json_constructor<T>::value;
+inline constexpr bool has_nlohmann_json_binding_v = has_json_get<T> && has_json_constructor<T>;
 
 template<typename T>
 inline constexpr bool can_auto_register_type_v = has_json_traits_v<T> || has_nlohmann_json_binding_v<T>;
@@ -398,7 +396,7 @@ public:
     {
         AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable));
-        auto_registration_hooks_[name] = makeCallableTypeHooks<Fn>();
+        autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
     }
 
     template<typename Fn>
@@ -407,7 +405,7 @@ public:
     {
         AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
-        auto_registration_hooks_[name] = makeCallableTypeHooks<Fn>();
+        autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
     }
 
     template<typename Fn>
@@ -416,7 +414,7 @@ public:
     {
         AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
-        auto_registration_hooks_[name] = makeCallableTypeHooks<Fn>();
+        autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
     }
 
     template<typename R, typename... Args, typename Fn>
@@ -424,7 +422,7 @@ public:
     {
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable));
-        auto_registration_hooks_[name] = makeSignatureTypeHooks<R(Args...)>();
+        autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     template<typename R, typename... Args, typename Fn>
@@ -432,7 +430,7 @@ public:
     {
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
-        auto_registration_hooks_[name] = makeSignatureTypeHooks<R(Args...)>();
+        autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     template<typename R, typename... Args, typename Fn>
@@ -440,7 +438,7 @@ public:
     {
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
-        auto_registration_hooks_[name] = makeSignatureTypeHooks<R(Args...)>();
+        autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     json invokeJson(const json& request) const
@@ -452,7 +450,6 @@ public:
             const json& request_object = requireRequestObject(request);
             name = extractFunctionName(request_object);
             FunctionInfo info = getFunctionInfo(name);
-            ensureAutoRegistered(info.name);
             ensureJsonCallable(info);
             std::vector<std::any> packed_args = packArgsFromJson(info, extractArgsNode(request_object));
             FuncCallResult result = call(name, packed_args);
@@ -531,16 +528,9 @@ private:
         return makeTypeHooks<Traits>(std::make_index_sequence<Traits::arity>{});
     }
 
-    void ensureAutoRegistered(const std::string& name) const
+    void autoRegisterTypes(const std::string& name, const AutoRegistrationHooks& hooks)
     {
-        const auto hooks_it = auto_registration_hooks_.find(name);
-        if (hooks_it == auto_registration_hooks_.end())
-        {
-            return;
-        }
-
         FunctionInfo info = getFunctionInfo(name);
-        const AutoRegistrationHooks& hooks = hooks_it->second;
 
         for (std::size_t index = 0; index < info.arg_types.size(); ++index)
         {
@@ -699,19 +689,6 @@ private:
         }
     }
 
-    bool isJsonCallable(const FunctionInfo& info) const
-    {
-        for (const auto& arg_type : info.arg_types)
-        {
-            if (!registry_.canRead(arg_type))
-            {
-                return false;
-            }
-        }
-
-        return registry_.canWrite(info.ret_type);
-    }
-
     void ensureJsonCallable(const FunctionInfo& info) const
     {
         for (std::size_t index = 0; index < info.arg_types.size(); ++index)
@@ -858,8 +835,7 @@ private:
     }
 
     MapType& func_registry_;
-    std::unordered_map<std::string, AutoRegistrationHooks> auto_registration_hooks_;
-    mutable JsonTypeRegistry registry_;
+    JsonTypeRegistry registry_;
 };
 
 using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;

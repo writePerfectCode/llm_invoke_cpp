@@ -11,7 +11,7 @@ option(LLM_INVOKE_CPP_BUILD_EXAMPLES "Build the example programs" ON)
 add_library(llm_invoke_cpp_func_registry INTERFACE)
 add_library(llm_invoke_cpp::func_registry ALIAS llm_invoke_cpp_func_registry)
 
-target_compile_features(llm_invoke_cpp_func_registry INTERFACE cxx_std_20)
+target_compile_features(llm_invoke_cpp_func_registry INTERFACE cxx_std_23)
 target_include_directories(llm_invoke_cpp_func_registry
     INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

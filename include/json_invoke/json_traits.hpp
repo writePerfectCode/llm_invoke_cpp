@@ -11,16 +11,14 @@ struct json_traits;
 
 namespace detail {
 
-template<typename T, typename = void>
-struct has_json_traits : std::false_type {};
+template<typename T>
+concept has_json_traits = requires(const nlohmann::json& value, const T& object) {
+    json_traits<T>::from_json_value(value);
+    json_traits<T>::to_json_value(object);
+};
 
 template<typename T>
-struct has_json_traits<T, std::void_t<
-    decltype(json_traits<T>::from_json_value(std::declval<const nlohmann::json&>())),
-    decltype(json_traits<T>::to_json_value(std::declval<const T&>()))>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool has_json_traits_v = has_json_traits<T>::value;
+inline constexpr bool has_json_traits_v = has_json_traits<T>;
 
 } // namespace detail
 
@@ -29,7 +27,8 @@ inline constexpr bool has_json_traits_v = has_json_traits<T>::value;
 namespace nlohmann {
 
 template<typename T>
-struct adl_serializer<T, std::enable_if_t<json_invoke::detail::has_json_traits_v<T>, void>> {
+    requires json_invoke::detail::has_json_traits<T>
+struct adl_serializer<T, void> {
     static void to_json(json& value, const T& object)
     {
         value = json_invoke::json_traits<T>::to_json_value(object);
