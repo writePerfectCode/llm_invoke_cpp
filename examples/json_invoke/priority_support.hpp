@@ -3,7 +3,7 @@
 #include <array>
 #include <string_view>
 #include <utility>
-#include <func_registry/enum_traits.hpp>
+#include <type_meta/enum_traits.hpp>
 
 enum class Priority {
     low = 0,

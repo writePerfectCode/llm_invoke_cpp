@@ -77,8 +77,5 @@ int main()
         std::cout << summary << std::endl;
     }
 
-    std::cout << "\n--- Tool specs ---" << std::endl;
-    std::cout << func_registry::renderAllToolSpecs(registry) << std::endl;
-
     return 0;
 }

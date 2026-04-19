@@ -4,9 +4,23 @@
 #include <string_view>
 #include <utility>
 #include "json_common.hpp"
-#include "../func_registry/registry_introspection.hpp"
+#include "../tool_meta/tool_introspection.hpp"
 
 namespace json_invoke {
+
+inline json typeSchemaToJson(const func_registry::TypeSchema& schema);
+
+inline json parseSchemaJsonLiteral(std::string_view literal)
+{
+    try
+    {
+        return json::parse(literal.begin(), literal.end());
+    }
+    catch (const json::parse_error&)
+    {
+        return std::string(literal);
+    }
+}
 
 inline json toolParameterSpecToJson(const func_registry::ToolParameterSpec& spec)
 {
@@ -16,6 +30,7 @@ inline json toolParameterSpecToJson(const func_registry::ToolParameterSpec& spec
         {"llm_type", spec.llm_type},
         {"required", spec.required},
         {"nullable", spec.nullable},
+        {"schema", typeSchemaToJson(spec.schema)},
     };
 
     if (!spec.enum_values.empty())
@@ -51,6 +66,7 @@ inline json toolSpecToJson(const func_registry::ToolSpec& spec)
         {"return_cpp_type_name", spec.return_cpp_type_name},
         {"return_llm_type", spec.return_llm_type},
         {"return_nullable", spec.return_nullable},
+        {"return_schema", typeSchemaToJson(spec.return_schema)},
     };
 
     if (!spec.return_enum_values.empty())
@@ -94,6 +110,72 @@ inline json jsonSchemaType(std::string_view llm_type, bool nullable = false)
     return json::array({resolved, "null"});
 }
 
+inline json typeSchemaToJson(const func_registry::TypeSchema& schema)
+{
+    json result;
+
+    result["type"] = schema.nullable ? json::array({schema.type, "null"}) : json(schema.type);
+
+    if (!schema.description.empty())
+    {
+        result["description"] = schema.description;
+    }
+
+    if (schema.default_json.has_value())
+    {
+        result["default"] = parseSchemaJsonLiteral(*schema.default_json);
+    }
+
+    if (!schema.examples_json.empty())
+    {
+        json examples = json::array();
+        for (const auto& example : schema.examples_json)
+        {
+            examples.push_back(parseSchemaJsonLiteral(example));
+        }
+        result["examples"] = std::move(examples);
+    }
+
+    if (!schema.enum_values.empty())
+    {
+        result["enum"] = jsonSchemaEnumValues(schema.enum_values, schema.nullable);
+    }
+
+    if (schema.items)
+    {
+        result["items"] = typeSchemaToJson(*schema.items);
+    }
+
+    if (!schema.properties.empty())
+    {
+        json properties = json::object();
+        json required = json::array();
+
+        for (const auto& property : schema.properties)
+        {
+            properties[property.name] = typeSchemaToJson(*property.schema);
+            if (property.required)
+            {
+                required.push_back(property.name);
+            }
+        }
+
+        result["properties"] = std::move(properties);
+        result["required"] = std::move(required);
+        result["additionalProperties"] = schema.additional_properties_allowed;
+    }
+    else if (schema.additional_properties)
+    {
+        result["additionalProperties"] = typeSchemaToJson(*schema.additional_properties);
+    }
+    else if (schema.type == "object")
+    {
+        result["additionalProperties"] = schema.additional_properties_allowed;
+    }
+
+    return result;
+}
+
 inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
 {
     json properties = json::object();
@@ -101,18 +183,11 @@ inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
 
     for (const auto& parameter : spec.parameters)
     {
-        properties[parameter.name] = {
-            {"type", jsonSchemaType(parameter.llm_type, parameter.nullable)},
-            {"description", "C++ type: " + parameter.cpp_type_name},
-            {"x-cpp-type", parameter.cpp_type_name},
-            {"x-llm-type", parameter.llm_type},
-            {"x-nullable", parameter.nullable},
-        };
-
-        if (!parameter.enum_values.empty())
-        {
-            properties[parameter.name]["enum"] = jsonSchemaEnumValues(parameter.enum_values, parameter.nullable);
-        }
+        properties[parameter.name] = typeSchemaToJson(parameter.schema);
+        properties[parameter.name]["description"] = "C++ type: " + parameter.cpp_type_name;
+        properties[parameter.name]["x-cpp-type"] = parameter.cpp_type_name;
+        properties[parameter.name]["x-llm-type"] = parameter.llm_type;
+        properties[parameter.name]["x-nullable"] = parameter.nullable;
 
         if (parameter.required)
         {
@@ -137,6 +212,7 @@ inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
                 {"cpp_type_name", spec.return_cpp_type_name},
                 {"llm_type", spec.return_llm_type},
                 {"nullable", spec.return_nullable},
+                {"schema", typeSchemaToJson(spec.return_schema)},
             }},
         }},
     };

@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 #include "../func_registry/func_registry.hpp"
+#include "../tool_meta/tool_introspection.hpp"
+#include "../type_meta/enum_traits.hpp"
 #include "json_common.hpp"
 #include "json_introspection.hpp"
 #include "json_traits.hpp"
@@ -487,6 +489,7 @@ public:
     void registerFunction(const std::string& name, Fn&& fn)
     {
         AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
+        func_registry::registerCallableTypeIntrospection<Fn>();
         func_registry_.registerFunction(name, std::move(callable));
         autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
     }
@@ -496,6 +499,7 @@ public:
     void registerFunction(const std::string& name, Fn&& fn, FunctionMetadata metadata)
     {
         AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
+        func_registry::registerCallableTypeIntrospection<Fn>();
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
         autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
     }
@@ -505,6 +509,7 @@ public:
     void registerFunction(const std::string& name, Fn&& fn, std::string description)
     {
         AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
+        func_registry::registerCallableTypeIntrospection<Fn>();
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
         autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
     }
@@ -513,6 +518,7 @@ public:
     void registerFunctionAs(const std::string& name, Fn&& fn)
     {
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
+        func_registry::registerSignatureTypeIntrospection<R(Args...)>();
         func_registry_.registerFunction(name, std::move(callable));
         autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
@@ -521,6 +527,7 @@ public:
     void registerFunctionAs(const std::string& name, Fn&& fn, FunctionMetadata metadata)
     {
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
+        func_registry::registerSignatureTypeIntrospection<R(Args...)>();
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
         autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
@@ -529,6 +536,7 @@ public:
     void registerFunctionAs(const std::string& name, Fn&& fn, std::string description)
     {
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
+        func_registry::registerSignatureTypeIntrospection<R(Args...)>();
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
         autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
@@ -550,7 +558,7 @@ public:
                 {"ok", true},
                 {"name", name},
                 {"return_cpp_type_name", info.ret_type_name},
-                {"return_llm_type", info.ret_llm_type},
+                {"return_llm_type", func_registry::getTypeIntrospectionOrFallback(info.ret_type).llm_type},
                 {"value", registry_.toJson(result.any(), result.declaredReturnType())},
             };
         }
@@ -931,7 +939,13 @@ private:
 
     static bool isArgumentRequired(const FunctionInfo& info, std::size_t index)
     {
-        return index >= info.arg_required.size() || info.arg_required[index];
+        if (index >= info.arg_types.size())
+        {
+            return true;
+        }
+
+        const auto type_info = func_registry::getTypeIntrospection(info.arg_types[index]);
+        return !(type_info && type_info->optional);
     }
 
     static json makeErrorResponse(std::string_view name, std::string_view code, std::string_view message)

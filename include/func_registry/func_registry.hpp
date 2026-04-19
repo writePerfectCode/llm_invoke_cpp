@@ -14,9 +14,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include "enum_traits.hpp"
 #include "any_callable.hpp"
-#include "registry_introspection.hpp"
+#include "function_summary.hpp"
 #include "call_result.hpp"
 
 namespace func_registry {

@@ -1,19 +1,14 @@
 #pragma once
 
 #include <any>
-#include <array>
 #include <functional>
-#include <map>
-#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <typeindex>
-#include <unordered_map>
 #include <vector>
-#include "enum_traits.hpp"
 #include "function_traits.hpp"
 
 namespace func_registry {
@@ -22,15 +17,8 @@ struct CallableMetadata {
     std::string name;
     std::type_index ret_type{typeid(void)};
     std::string ret_type_name;
-    std::string ret_llm_type;
-    bool ret_nullable{false};
     std::vector<std::type_index> arg_types;
     std::vector<std::string> arg_type_names;
-    std::vector<std::string> arg_llm_types;
-    std::vector<bool> arg_required;
-    std::vector<bool> arg_nullable;
-    std::vector<std::vector<std::string>> arg_enum_values;
-    std::vector<std::string> ret_enum_values;
     std::vector<std::string> param_names;
     std::string description;
 };
@@ -64,140 +52,6 @@ inline std::string normalizeTypeName(std::string name)
     replaceAll(name, "std::basic_string_view<char, std::char_traits<char> >", "std::string_view");
     replaceAll(name, "std::basic_string_view<char>", "std::string_view");
     return name;
-}
-
-template<typename T>
-using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
-
-template<typename T>
-struct is_std_vector : std::false_type {};
-
-template<typename T, typename Alloc>
-struct is_std_vector<std::vector<T, Alloc>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool is_std_vector_v = is_std_vector<T>::value;
-
-template<typename T>
-struct is_std_array : std::false_type {};
-
-template<typename T, std::size_t N>
-struct is_std_array<std::array<T, N>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool is_std_array_v = is_std_array<T>::value;
-
-template<typename T>
-struct is_std_tuple : std::false_type {};
-
-template<typename... Ts>
-struct is_std_tuple<std::tuple<Ts...>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool is_std_tuple_v = is_std_tuple<T>::value;
-
-template<typename T>
-struct is_std_map : std::false_type {};
-
-template<typename K, typename V, typename Compare, typename Alloc>
-struct is_std_map<std::map<K, V, Compare, Alloc>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool is_std_map_v = is_std_map<T>::value;
-
-template<typename T>
-struct is_std_unordered_map : std::false_type {};
-
-template<typename K, typename V, typename Hash, typename KeyEqual, typename Alloc>
-struct is_std_unordered_map<std::unordered_map<K, V, Hash, KeyEqual, Alloc>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool is_std_unordered_map_v = is_std_unordered_map<T>::value;
-
-template<typename T>
-struct is_std_optional : std::false_type {};
-
-template<typename U>
-struct is_std_optional<std::optional<U>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool is_std_optional_v = is_std_optional<T>::value;
-
-template<typename T>
-struct optional_value_type {
-    using type = T;
-};
-
-template<typename U>
-struct optional_value_type<std::optional<U>> {
-    using type = U;
-};
-
-template<typename T>
-using optional_value_type_t = typename optional_value_type<T>::type;
-
-template<typename T>
-std::string llm_type_name()
-{
-    using D = remove_cvref_t<T>;
-    using Unwrapped = remove_cvref_t<optional_value_type_t<D>>;
-
-    if constexpr (
-        std::is_same_v<Unwrapped, std::string> ||
-        std::is_same_v<Unwrapped, std::string_view> ||
-        std::is_same_v<Unwrapped, const char*> ||
-        std::is_same_v<Unwrapped, char*>)
-    {
-        return "string";
-    }
-    else if constexpr (std::is_same_v<Unwrapped, bool>)
-    {
-        return "boolean";
-    }
-    else if constexpr (has_enum_traits_v<Unwrapped>)
-    {
-        return "string";
-    }
-    else if constexpr (std::is_integral_v<Unwrapped>)
-    {
-        return "integer";
-    }
-    else if constexpr (std::is_enum_v<Unwrapped>)
-    {
-        return "integer";
-    }
-    else if constexpr (std::is_floating_point_v<Unwrapped>)
-    {
-        return "number";
-    }
-    else if constexpr (is_std_vector_v<Unwrapped> || is_std_array_v<Unwrapped> || is_std_tuple_v<Unwrapped>)
-    {
-        return "array";
-    }
-    else if constexpr (is_std_map_v<Unwrapped> || is_std_unordered_map_v<Unwrapped> || std::is_class_v<Unwrapped> || std::is_union_v<Unwrapped>)
-    {
-        return "object";
-    }
-    else
-    {
-        return "unknown";
-    }
-}
-
-template<typename T>
-std::vector<std::string> enum_values()
-{
-    using D = remove_cvref_t<T>;
-    using Unwrapped = remove_cvref_t<optional_value_type_t<D>>;
-
-    if constexpr (has_enum_traits_v<Unwrapped>)
-    {
-        return func_registry::enum_names<Unwrapped>();
-    }
-    else
-    {
-        return {};
-    }
 }
 
 template<typename T>
@@ -307,15 +161,8 @@ static AnyCallable makeCallable_impl(Fn&& fn, std::index_sequence<I...>)
     AnyCallable ac;
     ac.ret_type = typeid(R);
     ac.ret_type_name = any_callable_detail::type_name<R>();
-    ac.ret_llm_type = any_callable_detail::llm_type_name<R>();
-    ac.ret_nullable = any_callable_detail::is_std_optional_v<any_callable_detail::remove_cvref_t<R>>;
-    ac.ret_enum_values = any_callable_detail::enum_values<R>();
     ac.arg_types = { std::type_index(typeid(any_callable_detail::expected_any_type_t<typename Traits::template arg<I>>))... };
     ac.arg_type_names = { any_callable_detail::type_name<typename Traits::template arg<I>>()... };
-    ac.arg_llm_types = { any_callable_detail::llm_type_name<typename Traits::template arg<I>>()... };
-    ac.arg_required = { !any_callable_detail::is_std_optional_v<any_callable_detail::remove_cvref_t<typename Traits::template arg<I>>>... };
-    ac.arg_nullable = { any_callable_detail::is_std_optional_v<any_callable_detail::remove_cvref_t<typename Traits::template arg<I>>>... };
-    ac.arg_enum_values = { any_callable_detail::enum_values<typename Traits::template arg<I>>()... };
 
     using FnStored = std::decay_t<Fn>;
     FnStored stored = std::forward<Fn>(fn);

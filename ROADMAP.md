@@ -10,7 +10,7 @@ The long-term goal is to let an LLM discover, validate, and invoke C++ functions
 - Finalize the public naming around `func_registry` and `json_invoke`.
 - Keep the core registry dependency-free.
 - Clean up examples so they demonstrate the intended public API only.
-- Verify metadata export and JSON invocation behavior on Windows builds.
+- Verify tool/schema export and JSON invocation behavior on Windows builds.
 
 ## Phase 2: Improve LLM Readiness
 
