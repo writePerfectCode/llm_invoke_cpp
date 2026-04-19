@@ -3,34 +3,32 @@
 #include <string>
 #include "person_support.hpp"
 #include "priority_support.hpp"
-#include <func_registry/func_registry.hpp>
 #include <json_invoke/json_invoke.hpp>
 
 int main()
 {
-    func_registry::FuncRegistry registry;
-    json_invoke::JsonInvokeAdapter adapter(registry);
+    json_invoke::JsonInvokeAdapter adapter;
 
     adapter.registerFunction("add", [](int x, int y) { return x + y; }, "Add two integers.");
     adapter.registerFunction("getPerson", getPerson, "Construct one person.");
     adapter.registerFunction(
         "describePerson",
         &Person::describe,
-        func_registry::FunctionMetadata{{"person"}, "Call Person::describe() for one person."});
+        json_invoke::FunctionMetadata{{"person"}, "Call Person::describe() for one person."});
     adapter.registerFunction(
         "countPeopleAtLeastAge",
         countPeopleAtLeastAge,
-        func_registry::FunctionMetadata{{"people", "minimum_age"}, "Count how many people in a JSON roster meet a minimum age."});
+        json_invoke::FunctionMetadata{{"people", "minimum_age"}, "Count how many people in a JSON roster meet a minimum age."});
     adapter.registerFunction(
         "countPeopleAtLeastAgeByTeam",
         countPeopleAtLeastAgeByTeam,
-        func_registry::FunctionMetadata{
+        json_invoke::FunctionMetadata{
             {"team_rosters", "minimum_age"},
             "Count how many people in each team roster meet a minimum age."});
     adapter.registerFunction(
         "oldestPersonByQueue",
         oldestPersonByQueue,
-        func_registry::FunctionMetadata{
+        json_invoke::FunctionMetadata{
             {"queue_rosters"},
             "Find the oldest person in each support queue."});
     adapter.registerFunction(
@@ -38,11 +36,11 @@ int main()
         [](std::optional<std::string> nickname) {
             return nickname.value_or("anonymous");
         },
-        func_registry::FunctionMetadata{{"nickname"}, "Return the nickname or a default when omitted."});
+        json_invoke::FunctionMetadata{{"nickname"}, "Return the nickname or a default when omitted."});
     adapter.registerFunction(
         "recommendIncidentPriority",
         recommendIncidentPriority,
-        func_registry::FunctionMetadata{
+        json_invoke::FunctionMetadata{
             {"requested_priority", "customer_blocked", "production_impact", "affected_users"},
             "Recommend an incident priority from request urgency and customer impact."});
 
@@ -190,14 +188,14 @@ int main()
     });
     std::cout << func_registry::enum_name(recommendedPriority) << std::endl;
 
-    std::cout << "\n--- Tool specs JSON ---" << std::endl;
-    std::cout << json_invoke::getAllToolSpecsJson(registry).dump(2) << std::endl;
+    //std::cout << "\n--- Tool specs JSON ---" << std::endl;
+    //std::cout << adapter.getAllToolSpecsJson().dump(2) << std::endl;
 
     //std::cout << "\n--- Tool summaries JSON ---" << std::endl;
-    //std::cout << json_invoke::getAllToolSummariesJson(registry).dump(2) << std::endl;
+    //std::cout << adapter.getAllToolSummariesJson().dump(2) << std::endl;
 
-    //std::cout << "\n--- Tool schemas JSON ---" << std::endl;
-    //std::cout << json_invoke::getAllToolSchemasJson(registry).dump(2) << std::endl;
+    std::cout << "\n--- Tool schemas JSON ---" << std::endl;
+    std::cout << adapter.getAllToolSchemasJson().dump(2) << std::endl;
     
     return 0;
 }

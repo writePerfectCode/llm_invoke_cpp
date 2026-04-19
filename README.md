@@ -49,7 +49,6 @@ for (const auto& line : registry.describeAllFunctions()) {
 Quick LLM tool example
 
 ```cpp
-#include <func_registry/func_registry.hpp>
 #include <json_invoke/json_invoke.hpp>
 #include <json_invoke/json_traits.hpp>
 
@@ -69,9 +68,7 @@ struct json_invoke::json_traits<Person> {
   }
 };
 
-func_registry::FuncRegistry registry;
-
-json_invoke::JsonInvokeAdapter adapter(registry);
+json_invoke::JsonInvokeAdapter adapter;
 adapter.registerFunction("get_person", [] { return Person{"Alice", 30}; }, "Return one person.");
 std::cout << adapter.invoke({{"name", "get_person"}, {"args", json_invoke::json::array()}}).dump(2) << std::endl;
 ```
@@ -108,7 +105,10 @@ API notes
 - Include `tool_meta/tool_introspection.hpp` for `getToolSpec(name)` / `getAllToolSpecs()` and `renderAllToolSpecs()`.
 - Use `registerToolFunction(...)` / `registerToolFunctionAs(...)` when a plain registry should also populate tool/type metadata for `tool_meta` export.
 - `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
+- `json_invoke::JsonInvokeAdapter()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
 - `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
+- `json_invoke::JsonInvokeAdapter::getToolSpecJson(...)` / `getAllToolSpecsJson()`: export JSON tool metadata directly from the adapter without separately managing a registry object.
+- `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
 - `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.
 - `json_invoke::getAllToolSummariesJson(registry)`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
 - `json_invoke::getToolSchemaJson(registry, name)` / `json_invoke::getAllToolSchemasJson(registry)`: emit JSON schemas from registered tool metadata without triggering invocation-time conversion checks.

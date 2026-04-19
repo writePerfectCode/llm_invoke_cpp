@@ -457,9 +457,24 @@ public:
         std::vector<detail::TypeRegistrationHook> arg_type_hooks;
     };
 
+    BasicJsonInvokeAdapter()
+        : func_registry_(owned_func_registry_)
+    {
+    }
+
     explicit BasicJsonInvokeAdapter(MapType& func_registry)
         : func_registry_(func_registry)
     {
+    }
+
+    MapType& functionRegistry() noexcept
+    {
+        return func_registry_;
+    }
+
+    const MapType& functionRegistry() const noexcept
+    {
+        return func_registry_;
     }
 
     JsonTypeRegistry& registry() noexcept
@@ -602,6 +617,31 @@ public:
         {
             return makeErrorResponse("", "unknown_error", e.what()).dump(indent);
         }
+    }
+
+    json getToolSpecJson(const std::string& name) const
+    {
+        return json_invoke::getToolSpecJson(func_registry_, name);
+    }
+
+    json getAllToolSpecsJson() const
+    {
+        return json_invoke::getAllToolSpecsJson(func_registry_);
+    }
+
+    json getAllToolSummariesJson() const
+    {
+        return json_invoke::getAllToolSummariesJson(func_registry_);
+    }
+
+    json getToolSchemaJson(const std::string& name) const
+    {
+        return json_invoke::getToolSchemaJson(func_registry_, name);
+    }
+
+    json getAllToolSchemasJson() const
+    {
+        return json_invoke::getAllToolSchemasJson(func_registry_);
     }
 
 private:
@@ -966,6 +1006,7 @@ private:
         return response;
     }
 
+    MapType owned_func_registry_{};
     MapType& func_registry_;
     JsonTypeRegistry registry_;
 };
