@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "enum_traits.hpp"
 #include "any_callable.hpp"
 #include "registry_introspection.hpp"
 #include "call_result.hpp"

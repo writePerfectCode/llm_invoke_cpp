@@ -10,12 +10,20 @@ namespace json_invoke {
 
 inline json toolParameterSpecToJson(const func_registry::ToolParameterSpec& spec)
 {
-    return json{
+    json result{
         {"name", spec.name},
         {"cpp_type_name", spec.cpp_type_name},
         {"llm_type", spec.llm_type},
         {"required", spec.required},
+        {"nullable", spec.nullable},
     };
+
+    if (!spec.enum_values.empty())
+    {
+        result["enum_values"] = spec.enum_values;
+    }
+
+    return result;
 }
 
 inline json toolSummaryToJson(const func_registry::ToolSpec& spec)
@@ -34,7 +42,7 @@ inline json toolSpecToJson(const func_registry::ToolSpec& spec)
         parameters.push_back(toolParameterSpecToJson(parameter));
     }
 
-    return json{
+    json result{
         {"tool_name", spec.tool_name},
         {"function_name", spec.function_name},
         {"prototype", spec.prototype},
@@ -42,18 +50,48 @@ inline json toolSpecToJson(const func_registry::ToolSpec& spec)
         {"parameters", std::move(parameters)},
         {"return_cpp_type_name", spec.return_cpp_type_name},
         {"return_llm_type", spec.return_llm_type},
+        {"return_nullable", spec.return_nullable},
     };
+
+    if (!spec.return_enum_values.empty())
+    {
+        result["return_enum_values"] = spec.return_enum_values;
+    }
+
+    return result;
 }
 
-inline std::string jsonSchemaType(std::string_view llm_type)
+inline json jsonSchemaEnumValues(const std::vector<std::string>& enum_values, bool nullable)
 {
+    json values = json::array();
+    for (const auto& value : enum_values)
+    {
+        values.push_back(value);
+    }
+
+    if (nullable)
+    {
+        values.push_back(nullptr);
+    }
+
+    return values;
+}
+
+inline json jsonSchemaType(std::string_view llm_type, bool nullable = false)
+{
+    std::string resolved = "string";
     if (llm_type == "string" || llm_type == "integer" || llm_type == "number" ||
         llm_type == "boolean" || llm_type == "array" || llm_type == "object")
     {
-        return std::string(llm_type);
+        resolved = std::string(llm_type);
     }
 
-    return "string";
+    if (!nullable)
+    {
+        return resolved;
+    }
+
+    return json::array({resolved, "null"});
 }
 
 inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
@@ -64,11 +102,17 @@ inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
     for (const auto& parameter : spec.parameters)
     {
         properties[parameter.name] = {
-            {"type", jsonSchemaType(parameter.llm_type)},
+            {"type", jsonSchemaType(parameter.llm_type, parameter.nullable)},
             {"description", "C++ type: " + parameter.cpp_type_name},
             {"x-cpp-type", parameter.cpp_type_name},
             {"x-llm-type", parameter.llm_type},
+            {"x-nullable", parameter.nullable},
         };
+
+        if (!parameter.enum_values.empty())
+        {
+            properties[parameter.name]["enum"] = jsonSchemaEnumValues(parameter.enum_values, parameter.nullable);
+        }
 
         if (parameter.required)
         {
@@ -76,7 +120,7 @@ inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
         }
     }
 
-    return json{
+    json result{
         {"type", "function"},
         {"function", {
             {"name", spec.tool_name},
@@ -92,9 +136,17 @@ inline json toolSchemaToJson(const func_registry::ToolSpec& spec)
             {"x-return", {
                 {"cpp_type_name", spec.return_cpp_type_name},
                 {"llm_type", spec.return_llm_type},
+                {"nullable", spec.return_nullable},
             }},
         }},
     };
+
+    if (!spec.return_enum_values.empty())
+    {
+        result["function"]["x-return"]["enum_values"] = spec.return_enum_values;
+    }
+
+    return result;
 }
 
 template<typename Registry>

@@ -1,6 +1,8 @@
 #include <iostream>
+#include <optional>
 #include <string>
 #include "person_support.hpp"
+#include "priority_support.hpp"
 #include <func_registry/func_registry.hpp>
 #include <json_invoke/json_invoke.hpp>
 
@@ -15,6 +17,18 @@ int main()
         "describePerson",
         &Person::describe,
         func_registry::FunctionMetadata{{"person"}, "Call Person::describe() for one person."});
+    adapter.registerFunction(
+        "displayNickname",
+        [](std::optional<std::string> nickname) {
+            return nickname.value_or("anonymous");
+        },
+        func_registry::FunctionMetadata{{"nickname"}, "Return the nickname or a default when omitted."});
+    adapter.registerFunction(
+        "recommendIncidentPriority",
+        recommendIncidentPriority,
+        func_registry::FunctionMetadata{
+            {"requested_priority", "customer_blocked", "production_impact", "affected_users"},
+            "Recommend an incident priority from request urgency and customer impact."});
 
     //#1
     std::cout << "--- Invoke add as int ---" << std::endl;
@@ -66,6 +80,44 @@ int main()
     };
     json_invoke::json descriptionJson = adapter.invoke(descriptionRequest);
     std::cout << descriptionJson.dump(2) << std::endl;
+
+    std::cout << "\n--- Invoke displayNickname without optional arg ---" << std::endl;
+    std::string nickname = adapter.invoke({
+        {"name", "displayNickname"},
+        {"args", json_invoke::json::object()},
+    });
+    std::cout << nickname << std::endl;
+
+    std::cout << "\n--- Invoke displayNickname with optional arg ---" << std::endl;
+    std::string nicknameWithArg = adapter.invoke({
+        {"name", "displayNickname"},
+        {"args", {"tom"}},
+    });
+    std::cout << nicknameWithArg << std::endl;
+
+    std::cout << "\n--- Recommend incident priority from named JSON args ---" << std::endl;
+    json_invoke::json recommendedPriorityJson = adapter.invoke({
+        {"name", "recommendIncidentPriority"},
+        {"args", {
+            {"requested_priority", "low"},
+            {"customer_blocked", true},
+            {"production_impact", false},
+            {"affected_users", 120},
+        }},
+    });
+    std::cout << recommendedPriorityJson.dump(2) << std::endl;
+
+    std::cout << "\n--- Recommend incident priority as typed enum ---" << std::endl;
+    Priority recommendedPriority = adapter.invoke({
+        {"name", "recommendIncidentPriority"},
+        {"args", {
+            {"requested_priority", "normal"},
+            {"customer_blocked", true},
+            {"production_impact", true},
+            {"affected_users", 320},
+        }},
+    });
+    std::cout << func_registry::enum_name(recommendedPriority) << std::endl;
 
     std::cout << "\n--- Tool specs JSON ---" << std::endl;
     std::cout << json_invoke::getAllToolSpecsJson(registry).dump(2) << std::endl;

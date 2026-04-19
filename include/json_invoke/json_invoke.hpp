@@ -2,6 +2,7 @@
 
 #include <any>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,6 +34,9 @@ class JsonTypeRegistry;
 namespace detail {
 
 template<typename T>
+using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
+
+template<typename T>
 concept has_json_get = requires(const json& value) {
     value.template get<T>();
 };
@@ -46,7 +50,108 @@ template<typename T>
 inline constexpr bool has_nlohmann_json_binding_v = has_json_get<T> && has_json_constructor<T>;
 
 template<typename T>
-inline constexpr bool can_auto_register_type_v = has_json_traits_v<T> || has_nlohmann_json_binding_v<T>;
+struct is_std_optional : std::false_type {};
+
+template<typename U>
+struct is_std_optional<std::optional<U>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_std_optional_v = is_std_optional<remove_cvref_t<T>>::value;
+
+template<typename T>
+struct optional_value_type {
+    using type = T;
+};
+
+template<typename U>
+struct optional_value_type<std::optional<U>> {
+    using type = U;
+};
+
+template<typename T>
+using optional_value_type_t = typename optional_value_type<remove_cvref_t<T>>::type;
+
+template<typename T>
+struct can_auto_register_type
+    : std::bool_constant<has_json_traits_v<T> || has_nlohmann_json_binding_v<T> || std::is_enum_v<T>> {};
+
+template<typename U>
+struct can_auto_register_type<std::optional<U>> : std::bool_constant<can_auto_register_type<remove_cvref_t<U>>::value> {};
+
+template<typename T>
+inline constexpr bool can_auto_register_type_v = can_auto_register_type<remove_cvref_t<T>>::value;
+
+template<typename T>
+remove_cvref_t<T> defaultFromJsonValue(const json& value)
+{
+    using D = remove_cvref_t<T>;
+
+    if constexpr (is_std_optional_v<D>)
+    {
+        using ValueType = remove_cvref_t<optional_value_type_t<D>>;
+        if (value.is_null())
+        {
+            return D{};
+        }
+
+        return D{defaultFromJsonValue<ValueType>(value)};
+    }
+    else if constexpr (std::is_enum_v<D>)
+    {
+        if constexpr (func_registry::has_enum_traits_v<D>)
+        {
+            if (value.is_string())
+            {
+                return func_registry::enum_value<D>(value.get_ref<const std::string&>());
+            }
+        }
+
+        using Underlying = std::underlying_type_t<D>;
+        return static_cast<D>(value.template get<Underlying>());
+    }
+    else if constexpr (has_json_traits_v<D>)
+    {
+        return json_traits<D>::from_json_value(value);
+    }
+    else
+    {
+        return value.template get<D>();
+    }
+}
+
+template<typename T>
+json defaultToJsonValue(const T& value)
+{
+    using D = remove_cvref_t<T>;
+
+    if constexpr (is_std_optional_v<D>)
+    {
+        if (!value.has_value())
+        {
+            return nullptr;
+        }
+
+        return defaultToJsonValue<remove_cvref_t<optional_value_type_t<D>>>(*value);
+    }
+    else if constexpr (std::is_enum_v<D>)
+    {
+        if constexpr (func_registry::has_enum_traits_v<D>)
+        {
+            return json(func_registry::enum_name(value));
+        }
+
+        using Underlying = std::underlying_type_t<D>;
+        return json(static_cast<Underlying>(value));
+    }
+    else if constexpr (has_json_traits_v<D>)
+    {
+        return json_traits<D>::to_json_value(value);
+    }
+    else
+    {
+        return json(value);
+    }
+}
 
 template<typename T>
 struct registered_argument_type {
@@ -169,7 +274,7 @@ public:
                 return detail::responseValue(response_);
             }
 
-            return detail::responseValue(response_).template get<T>();
+            return detail::defaultFromJsonValue<T>(detail::responseValue(response_));
         }
         catch (const JsonInvokeError&)
         {
@@ -221,26 +326,13 @@ public:
     {
         if constexpr (!std::is_void_v<T>)
         {
-            if constexpr (detail::has_json_traits_v<T>)
-            {
-                registerType<T>(
-                    [](const json& value) -> T {
-                        return json_traits<T>::from_json_value(value);
-                    },
-                    [](const T& value) -> json {
-                        return json_traits<T>::to_json_value(value);
-                    });
-            }
-            else
-            {
-                registerType<T>(
-                    [](const json& value) -> T {
-                        return value.get<T>();
-                    },
-                    [](const T& value) -> json {
-                        return json(value);
-                    });
-            }
+            registerType<T>(
+                [](const json& value) -> T {
+                    return detail::defaultFromJsonValue<T>(value);
+                },
+                [](const T& value) -> json {
+                    return detail::defaultToJsonValue<T>(value);
+                });
         }
     }
 
@@ -732,7 +824,7 @@ private:
 
     std::vector<std::any> packPositionalArgs(const FunctionInfo& info, const json& args) const
     {
-        if (args.size() != info.arg_types.size())
+        if (args.size() > info.arg_types.size())
         {
             throw JsonInvokeError(
                 "invalid_request",
@@ -740,11 +832,26 @@ private:
                 ", got " + std::to_string(args.size()));
         }
 
+        for (std::size_t index = args.size(); index < info.arg_types.size(); ++index)
+        {
+            if (isArgumentRequired(info, index))
+            {
+                throw JsonInvokeError(
+                    "invalid_request",
+                    "missing JSON argument for parameter '" + argumentLabel(info, index) + "'");
+            }
+        }
+
         std::vector<std::any> packed;
         packed.reserve(info.arg_types.size());
-        for (std::size_t index = 0; index < info.arg_types.size(); ++index)
+        for (std::size_t index = 0; index < args.size(); ++index)
         {
             packed.push_back(convertArgument(args[index], info.arg_types[index], index, argumentLabel(info, index)));
+        }
+
+        for (std::size_t index = args.size(); index < info.arg_types.size(); ++index)
+        {
+            packed.push_back(convertArgument(json(nullptr), info.arg_types[index], index, argumentLabel(info, index)));
         }
 
         return packed;
@@ -784,9 +891,15 @@ private:
             auto it = args.find(parameter_name);
             if (it == args.end())
             {
-                throw JsonInvokeError(
-                    "invalid_request",
-                    "missing JSON argument for parameter '" + parameter_name + "'");
+                if (isArgumentRequired(info, index))
+                {
+                    throw JsonInvokeError(
+                        "invalid_request",
+                        "missing JSON argument for parameter '" + parameter_name + "'");
+                }
+
+                packed.push_back(convertArgument(json(nullptr), info.arg_types[index], index, parameter_name));
+                continue;
             }
 
             packed.push_back(convertArgument(*it, info.arg_types[index], index, parameter_name));
@@ -814,6 +927,11 @@ private:
             return info.param_names[index];
         }
         return "arg" + std::to_string(index);
+    }
+
+    static bool isArgumentRequired(const FunctionInfo& info, std::size_t index)
+    {
+        return index >= info.arg_required.size() || info.arg_required[index];
     }
 
     static json makeErrorResponse(std::string_view name, std::string_view code, std::string_view message)

@@ -16,6 +16,8 @@ struct ToolParameterSpec {
     std::string cpp_type_name;
     std::string llm_type;
     bool required{true};
+    bool nullable{false};
+    std::vector<std::string> enum_values;
 };
 
 struct ToolSpec {
@@ -26,6 +28,8 @@ struct ToolSpec {
     std::vector<ToolParameterSpec> parameters;
     std::string return_cpp_type_name;
     std::string return_llm_type;
+    bool return_nullable{false};
+    std::vector<std::string> return_enum_values;
 };
 
 inline FunctionInfo makeFunctionInfo(std::string_view name, const AnyCallable& callable)
@@ -46,6 +50,9 @@ inline ToolParameterSpec makeToolParameterSpec(const FunctionInfo& info, std::si
         : "arg" + std::to_string(index);
     spec.cpp_type_name = index < info.arg_type_names.size() ? info.arg_type_names[index] : std::string("<unknown>");
     spec.llm_type = index < info.arg_llm_types.size() ? info.arg_llm_types[index] : std::string("unknown");
+    spec.required = index < info.arg_required.size() ? info.arg_required[index] : true;
+    spec.nullable = index < info.arg_nullable.size() ? info.arg_nullable[index] : false;
+    spec.enum_values = index < info.arg_enum_values.size() ? info.arg_enum_values[index] : std::vector<std::string>{};
     return spec;
 }
 
@@ -94,6 +101,8 @@ inline ToolSpec makeToolSpec(const FunctionInfo& info, const std::string& tool_n
     spec.description = info.description;
     spec.return_cpp_type_name = info.ret_type_name;
     spec.return_llm_type = info.ret_llm_type.empty() ? std::string("unknown") : info.ret_llm_type;
+    spec.return_nullable = info.ret_nullable;
+    spec.return_enum_values = info.ret_enum_values;
     spec.parameters.reserve(info.arg_type_names.size());
 
     for (std::size_t i = 0; i < info.arg_type_names.size(); ++i)
@@ -150,6 +159,10 @@ inline std::string formatToolSpec(const ToolSpec& tool)
             }
 
             out += tool.parameters[i].name;
+            if (!tool.parameters[i].required)
+            {
+                out += "?";
+            }
             out += ": ";
             out += tool.parameters[i].llm_type;
             out += " (";

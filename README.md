@@ -18,6 +18,7 @@ Project layout
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_invoke/person.hpp`: example-only domain type used by the JSON invocation demo.
 - `examples/json_invoke/person_support.hpp`: example-only JSON bindings and helper functions for `Person`.
+- `examples/json_invoke/priority_support.hpp`: example-only enum mapping and incident-priority helper logic used by the JSON invocation demo.
 - `ROADMAP.md`: planned milestones for evolving the project.
 - `MEMO.md`: prioritized capability memo for the LLM-to-C++ goal.
 
@@ -104,6 +105,9 @@ API notes
 - `json_invoke::JsonInvokeAdapter::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.
 - `json_invoke::JsonInvokeAdapter::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
 - `json_invoke::json_traits<T>`: add custom JSON bindings for domain types.
+- `std::optional<T>` parameters are exported as non-required nullable schema properties and can be omitted from named JSON arguments.
+- enum parameters and return values are supported out of the box through their underlying integer representation.
+- specialize `func_registry::enum_traits<T>` to expose string-based enum mappings and emit schema enum values for LLM-friendly calls.
 
 Supported request shapes
 
