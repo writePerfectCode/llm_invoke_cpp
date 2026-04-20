@@ -154,3 +154,5 @@ ctest --test-dir build --output-on-failure
 ```
 
 The initial configure step downloads `nlohmann/json` into `build/_deps/` through `FetchContent`.
+
+GitHub Actions runs the same configure, build, and test flow on Windows for pushes and pull requests.
