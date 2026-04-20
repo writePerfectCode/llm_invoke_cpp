@@ -1,0 +1,184 @@
+[
+  {
+    "function": {
+      "description": "Add when the optional input is present.",
+      "name": "add_optional",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "lhs": {
+            "description": "C++ type: std::optional<int>",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "x-cpp-type": "std::optional<int>",
+            "x-llm-type": "integer",
+            "x-nullable": true
+          },
+          "rhs": {
+            "description": "C++ type: int",
+            "type": "integer",
+            "x-cpp-type": "int",
+            "x-llm-type": "integer",
+            "x-nullable": false
+          }
+        },
+        "required": [
+          "rhs"
+        ],
+        "type": "object"
+      },
+      "strict": true,
+      "x-prototype": "add_optional(std::optional<int> lhs, int rhs) -> std::optional<int> : Add when the optional input is present.",
+      "x-return": {
+        "cpp_type_name": "std::optional<int>",
+        "llm_type": "integer",
+        "nullable": true,
+        "schema": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Return one person.",
+      "name": "get_person",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "strict": true,
+      "x-prototype": "get_person() -> Person : Return one person.",
+      "x-return": {
+        "cpp_type_name": "Person",
+        "llm_type": "object",
+        "nullable": false,
+        "schema": {
+          "additionalProperties": false,
+          "description": "Person payload used by the JSON invocation demo.",
+          "examples": [
+            {
+              "age": 30,
+              "name": "Alice"
+            },
+            {
+              "age": 17,
+              "name": "Bob"
+            }
+          ],
+          "properties": {
+            "age": {
+              "default": 30,
+              "description": "Age in full years.",
+              "examples": [
+                17,
+                30,
+                41
+              ],
+              "type": "integer"
+            },
+            "name": {
+              "default": "Alice",
+              "description": "Display name shown to users.",
+              "examples": [
+                "Alice",
+                "Bob",
+                "Cara"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "age"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    "type": "function"
+  },
+  {
+    "function": {
+      "description": "Recommend an incident priority.",
+      "name": "recommend_priority",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_users": {
+            "description": "C++ type: int",
+            "type": "integer",
+            "x-cpp-type": "int",
+            "x-llm-type": "integer",
+            "x-nullable": false
+          },
+          "customer_blocked": {
+            "description": "C++ type: bool",
+            "type": "boolean",
+            "x-cpp-type": "bool",
+            "x-llm-type": "boolean",
+            "x-nullable": false
+          },
+          "production_impact": {
+            "description": "C++ type: bool",
+            "type": "boolean",
+            "x-cpp-type": "bool",
+            "x-llm-type": "boolean",
+            "x-nullable": false
+          },
+          "requested_priority": {
+            "description": "C++ type: Priority",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "critical"
+            ],
+            "type": "string",
+            "x-cpp-type": "Priority",
+            "x-llm-type": "string",
+            "x-nullable": false
+          }
+        },
+        "required": [
+          "requested_priority",
+          "customer_blocked",
+          "production_impact",
+          "affected_users"
+        ],
+        "type": "object"
+      },
+      "strict": true,
+      "x-prototype": "recommend_priority(Priority requested_priority, bool customer_blocked, bool production_impact, int affected_users) -> Priority : Recommend an incident priority.",
+      "x-return": {
+        "cpp_type_name": "Priority",
+        "enum_values": [
+          "low",
+          "normal",
+          "high",
+          "critical"
+        ],
+        "llm_type": "string",
+        "nullable": false,
+        "schema": {
+          "enum": [
+            "low",
+            "normal",
+            "high",
+            "critical"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "type": "function"
+  }
+]

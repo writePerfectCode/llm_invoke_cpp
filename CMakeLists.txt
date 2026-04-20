@@ -5,6 +5,7 @@ project(llm_invoke_cpp LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
+include(CTest)
 
 option(LLM_INVOKE_CPP_BUILD_EXAMPLES "Build the example programs" ON)
 
@@ -33,6 +34,33 @@ target_link_libraries(llm_invoke_cpp_json_invoke
         llm_invoke_cpp::func_registry
         nlohmann_json::nlohmann_json
 )
+
+if(BUILD_TESTING)
+    FetchContent_Declare(
+        doctest
+        GIT_REPOSITORY https://github.com/doctest/doctest.git
+        GIT_TAG v2.4.12
+    )
+
+    FetchContent_MakeAvailable(doctest)
+
+    add_executable(llm_invoke_cpp_tests
+        tests/test_main.cpp
+        tests/func_registry_tests.cpp
+        tests/json_invoke_tests.cpp
+    )
+
+    target_compile_features(llm_invoke_cpp_tests PRIVATE cxx_std_23)
+    target_compile_definitions(llm_invoke_cpp_tests PRIVATE LLM_INVOKE_CPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(llm_invoke_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(llm_invoke_cpp_tests
+        PRIVATE
+            doctest::doctest
+            llm_invoke_cpp::json_invoke
+    )
+
+    add_test(NAME llm_invoke_cpp_tests COMMAND llm_invoke_cpp_tests)
+endif()
 
 if(LLM_INVOKE_CPP_BUILD_EXAMPLES)
     add_executable(func_registry_demo examples/func_registry/func_registry_demo.cpp)

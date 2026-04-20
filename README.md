@@ -148,6 +148,7 @@ Build and run examples
 ```powershell
 cmake -S . -B build
 cmake --build build
+ctest --test-dir build --output-on-failure
 .\build\func_registry_demo.exe
 .\build\json_invoke_demo.exe
 ```
