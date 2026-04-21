@@ -77,6 +77,9 @@ template<typename T>
 struct can_auto_register_type
     : std::bool_constant<has_json_traits_v<T> || has_nlohmann_json_binding_v<T> || std::is_enum_v<T>> {};
 
+template<>
+struct can_auto_register_type<void> : std::false_type {};
+
 template<typename U>
 struct can_auto_register_type<std::optional<U>> : std::bool_constant<can_auto_register_type<remove_cvref_t<U>>::value> {};
 
@@ -821,7 +824,13 @@ private:
     {
         try
         {
-            return func_registry_.callByNameWrap(name, args);
+            AnyCallable callable = func_registry_.getFunction(name);
+            std::any result = callable.fn(args);
+            return FuncCallResult(std::move(result), callable.ret_type);
+        }
+        catch (const JsonInvokeError&)
+        {
+            throw;
         }
         catch (const std::exception& e)
         {
@@ -890,19 +899,19 @@ private:
             }
         }
 
-        std::vector<std::any> packed;
-        packed.reserve(info.arg_types.size());
+        std::vector<std::any> packed_args;
+        packed_args.reserve(info.arg_types.size());
         for (std::size_t index = 0; index < args.size(); ++index)
         {
-            packed.push_back(convertArgument(args[index], info.arg_types[index], index, argumentLabel(info, index)));
+            packed_args.push_back(convertArgument(args[index], info.arg_types[index], index, argumentLabel(info, index)));
         }
 
         for (std::size_t index = args.size(); index < info.arg_types.size(); ++index)
         {
-            packed.push_back(convertArgument(json(nullptr), info.arg_types[index], index, argumentLabel(info, index)));
+            packed_args.push_back(convertArgument(json(nullptr), info.arg_types[index], index, argumentLabel(info, index)));
         }
 
-        return packed;
+        return packed_args;
     }
 
     std::vector<std::any> packNamedArgs(const FunctionInfo& info, const json& args) const
@@ -930,8 +939,8 @@ private:
             }
         }
 
-        std::vector<std::any> packed;
-        packed.reserve(info.arg_types.size());
+        std::vector<std::any> packed_args;
+        packed_args.reserve(info.arg_types.size());
         for (std::size_t index = 0; index < info.arg_types.size(); ++index)
         {
             const std::string parameter_name = argumentLabel(info, index);
@@ -946,17 +955,21 @@ private:
                         "missing JSON argument for parameter '" + parameter_name + "'");
                 }
 
-                packed.push_back(convertArgument(json(nullptr), info.arg_types[index], index, parameter_name));
+                packed_args.push_back(convertArgument(json(nullptr), info.arg_types[index], index, parameter_name));
                 continue;
             }
 
-            packed.push_back(convertArgument(*it, info.arg_types[index], index, parameter_name));
+            packed_args.push_back(convertArgument(*it, info.arg_types[index], index, parameter_name));
         }
 
-        return packed;
+        return packed_args;
     }
 
-    std::any convertArgument(const json& value, std::type_index expected_type, std::size_t index, const std::string& label) const
+    std::any convertArgument(
+        const json& value,
+        std::type_index expected_type,
+        std::size_t index,
+        const std::string& label) const
     {
         try
         {

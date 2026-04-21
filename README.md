@@ -2,12 +2,13 @@
 
 `llm_invoke_cpp` is a header-only C++ library for exposing native C++ functions as LLM-callable tools.
 
-It is split into four public modules:
+It is split into five public modules:
 
 - `include/func_registry`: dependency-free function registration, concise function summaries, and runtime dispatch.
 - `include/tool_meta`: optional tool-facing metadata and tool spec export helpers built on top of the registry.
 - `include/type_meta`: optional enum/schema/type-introspection helpers used by tool export and JSON adaptation.
 - `include/json_invoke`: JSON-based invocation on top of the registry, intended for LLM and agent integrations.
+- `include/json_session_invoke`: higher-level session/runtime APIs built on top of `json_invoke` for stateful create/call/destroy flows.
 
 Project layout
 
@@ -17,12 +18,15 @@ Project layout
 - `include/type_meta/type_schema.hpp`: dependency-free structured type schema metadata and custom schema trait hook.
 - `include/type_meta/enum_traits.hpp`: string enum mapping hook for human-friendly enum export and conversion.
 - `include/type_meta/type_introspection.hpp`: optional type-level LLM/schema metadata helpers used by richer tool export.
-- `include/json_invoke/json_invoke.hpp`: JSON invocation adapter.
+- `include/json_invoke/json_invoke.hpp`: JSON invocation adapter for pure function registration and JSON-based calls.
 - `include/json_invoke/json_introspection.hpp`: standalone JSON tool/spec/schema export helpers for registry metadata.
 - `include/json_invoke/json_common.hpp`: shared JSON alias and JsonInvokeError definition used by both invoke and introspection layers.
 - `include/json_invoke/json_traits.hpp`: trait hook for custom JSON bindings.
+- `include/json_session_invoke/json_session_invoke.hpp`: session-oriented adapter that composes `json_invoke` and exposes stateful factory APIs as the high-level entry point.
+- `include/json_session_invoke/json_session_support.hpp`: session-only object handle, object options, and in-memory object store support.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
+- `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.
 - `examples/json_invoke/person.hpp`: example-only domain type used by the JSON invocation demo.
 - `examples/json_invoke/person_support.hpp`: example-only JSON bindings and helper functions for `Person`.
 - `examples/json_invoke/priority_support.hpp`: example-only enum mapping and incident-priority helper logic used by the JSON invocation demo.
@@ -77,6 +81,7 @@ Integration
 
 - `func_registry` depends only on the C++ standard library.
 - `json_invoke` depends on `nlohmann/json` and the core registry module.
+- `json_session_invoke` depends on `json_invoke` and re-exports a higher-level session-oriented API.
 - The bundled `CMakeLists.txt` fetches `nlohmann/json` automatically with `FetchContent`.
 
 Minimal CMake integration
@@ -94,6 +99,7 @@ FetchContent_MakeAvailable(llm_invoke_cpp)
 
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::func_registry)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_invoke)
+target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_session_invoke)
 ```
 
 API notes
@@ -114,6 +120,16 @@ API notes
 - `json_invoke::getToolSchemaJson(registry, name)` / `json_invoke::getAllToolSchemasJson(registry)`: emit JSON schemas from registered tool metadata without triggering invocation-time conversion checks.
 - `json_invoke::JsonInvokeAdapter::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.
 - `json_invoke::JsonInvokeAdapter::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
+- `json_session_invoke::JsonSessionInvokeAdapter`: higher-level session adapter that composes `json_invoke` and is the recommended entry point for stateful object lifecycles.
+- `json_session_invoke::SessionObjectHandle` / `json_session_invoke::SessionObjectOptions`: clearer public aliases for the session-layer handle and options types; `ObjectHandle` / `ObjectOptions` remain supported for compatibility.
+- `json_session_invoke::JsonSessionInvokeAdapter::jsonInvokeAdapter()`: explicit access to the composed lower-level `json_invoke` adapter when you need raw stateless capabilities.
+- `json_session_invoke::JsonSessionInvokeAdapter::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
+- The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
+- When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
+- If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `statefulDefaults().auto_register_destroy` is disabled.
+- `json_session_invoke::JsonSessionInvokeAdapter::statefulDefaults()`: adapter-level defaults for auto-generated stateful helpers, including `auto_register_destroy` and the default destroy description text.
+- `json_session_invoke::JsonSessionInvokeAdapter::registerDestroy<T>()`: when called without a name, defaults to `destroy_<object_type>` if the session object type was explicitly named during factory registration, otherwise falls back to `destroy_object`.
+- `json_session_invoke::JsonSessionInvokeAdapter::defaultFactoryToolName(...)` / `defaultDestroyToolName(...)`: reusable helpers for keeping explicit create/destroy tool names aligned with the session naming policy.
 - `json_invoke::json_traits<T>`: add custom JSON bindings for domain types.
 - `func_registry::schema_traits<T>`: optionally describe nested object fields so exported tool schemas can include custom object properties and container item shapes.
 - See `SCHEMA_TRAITS.md` for dedicated authoring guidance and LLM-oriented generation rules for `schema_traits<T>`.
@@ -125,6 +141,8 @@ API notes
 - `std::map<std::string, T>` and `std::unordered_map<std::string, T>` now export as object schemas with `additionalProperties`, so nested dictionary inputs and outputs can carry structured item schemas.
 
 Supported request shapes
+
+Stateful flows use the same request envelope through `json_session_invoke`. A create tool can return a handle like `{ "object_id": "obj_1", "object_type": "counter" }`, and later tools can accept that handle as a regular argument.
 
 ```json
 {
@@ -151,6 +169,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 .\build\func_registry_demo.exe
 .\build\json_invoke_demo.exe
+.\build\json_stateful_demo.exe
 ```
 
 The initial configure step downloads `nlohmann/json` into `build/_deps/` through `FetchContent`.
