@@ -54,6 +54,11 @@ int main()
     json_session_invoke::SessionObjectOptions counter_options;
     counter_options.serialized = true;
 
+    adapter.registerFunction(
+        "sum",
+        [](int left, int right) { return left + right; },
+        json_invoke::FunctionMetadata{{"left", "right"}, "Add two integers without session state."});
+
     adapter
         .stateful<Counter>("counter")
         .options(counter_options)
@@ -69,6 +74,13 @@ int main()
             &Counter::current,
             "Read the current counter value from one handle.")
         .destroy();
+
+    printResponse(
+        "Stateless sum",
+        adapter.invokeJson({
+            {"name", "sum"},
+            {"args", {{"left", 2}, {"right", 5}}},
+        }));
 
     const auto create_response = adapter.invokeJson({
         {"name", "create_counter"},

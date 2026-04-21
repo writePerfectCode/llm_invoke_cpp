@@ -130,7 +130,7 @@ public:
         StatefulRegistrationBuilder& method(const std::string& name, Fn&& fn)
         {
             validateMethodType<Fn>();
-            adapter_.registerFunction(name, std::forward<Fn>(fn));
+            adapter_.template registerStatefulMethod<T>(name, std::forward<Fn>(fn), makeDefaultMemberMetadata<Fn>(std::string{}));
             return *this;
         }
 
@@ -138,7 +138,7 @@ public:
         StatefulRegistrationBuilder& method(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
         {
             validateMethodType<Fn>();
-            adapter_.registerFunction(name, std::forward<Fn>(fn), std::move(metadata));
+            adapter_.template registerStatefulMethod<T>(name, std::forward<Fn>(fn), std::move(metadata));
             return *this;
         }
 
@@ -146,7 +146,7 @@ public:
         StatefulRegistrationBuilder& method(const std::string& name, Fn&& fn, std::string description)
         {
             validateMethodType<Fn>();
-            adapter_.registerFunction(name, std::forward<Fn>(fn), std::move(description));
+            adapter_.template registerStatefulMethod<T>(name, std::forward<Fn>(fn), makeDefaultMemberMetadata<Fn>(std::move(description)));
             return *this;
         }
 
@@ -359,7 +359,7 @@ public:
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
-            registerFunction(name, std::forward<Fn>(fn), makeDefaultMemberMetadata<Fn>(std::string{}));
+            throwMemberFunctionRegistrationError();
             return;
         }
 
@@ -371,17 +371,9 @@ public:
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
-            ensureDirectObjectTypeRegistered<Fn>();
-            runtime_.template registerMethod<Fn>(
-                name,
-                std::forward<Fn>(fn),
-                normalizeMemberMetadata<Fn>(std::move(metadata)),
-                [this](const std::string& function_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
-                    invoke_adapter_.registerFunction(function_name, std::forward<decltype(callable)>(callable), std::move(function_metadata));
-                },
-                [this](const json& value, std::type_index expected_type) {
-                    return invoke_adapter_.registry().fromJson(value, expected_type);
-                });
+            static_cast<void>(name);
+            static_cast<void>(metadata);
+            throwMemberFunctionRegistrationError();
             return;
         }
 
@@ -393,7 +385,9 @@ public:
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
-            registerFunction(name, std::forward<Fn>(fn), makeDefaultMemberMetadata<Fn>(std::move(description)));
+            static_cast<void>(name);
+            static_cast<void>(description);
+            throwMemberFunctionRegistrationError();
             return;
         }
 
@@ -403,18 +397,38 @@ public:
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& name, Fn&& fn)
     {
+        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
+        {
+            throwMemberFunctionRegistrationError();
+            return;
+        }
+
         invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn));
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
+        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
+        {
+            static_cast<void>(metadata);
+            throwMemberFunctionRegistrationError();
+            return;
+        }
+
         invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn), std::move(metadata));
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& name, Fn&& fn, std::string description)
     {
+        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
+        {
+            static_cast<void>(description);
+            throwMemberFunctionRegistrationError();
+            return;
+        }
+
         invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn), std::move(description));
     }
 
@@ -574,6 +588,31 @@ public:
     }
 
 private:
+    template<typename T, typename Fn>
+    void registerStatefulMethod(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
+    {
+        static_assert(std::is_member_function_pointer_v<std::decay_t<Fn>>,
+            "registerStatefulMethod requires a member function pointer");
+
+        ensureDirectObjectTypeRegistered<Fn>();
+        runtime_.template registerMethod<Fn>(
+            name,
+            std::forward<Fn>(fn),
+            normalizeMemberMetadata<Fn>(std::move(metadata)),
+            [this](const std::string& function_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
+                invoke_adapter_.registerFunction(function_name, std::forward<decltype(callable)>(callable), std::move(function_metadata));
+            },
+            [this](const json& value, std::type_index expected_type) {
+                return invoke_adapter_.registry().fromJson(value, expected_type);
+            });
+    }
+
+    [[noreturn]] static void throwMemberFunctionRegistrationError()
+    {
+        throw std::invalid_argument(
+            "JsonSessionInvokeAdapter::registerFunction does not accept member function pointers; use stateful<T>().method(...) instead");
+    }
+
     template<typename Fn>
     void ensureDirectObjectTypeRegistered()
     {

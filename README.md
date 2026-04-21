@@ -123,6 +123,8 @@ API notes
 - `json_session_invoke::JsonSessionInvokeAdapter`: higher-level session adapter that composes `json_invoke` and is the recommended entry point for stateful object lifecycles.
 - `json_session_invoke::SessionObjectHandle` / `json_session_invoke::SessionObjectOptions`: clearer public aliases for the session-layer handle and options types; `ObjectHandle` / `ObjectOptions` remain supported for compatibility.
 - `json_session_invoke::JsonSessionInvokeAdapter::jsonInvokeAdapter()`: explicit access to the composed lower-level `json_invoke` adapter when you need raw stateless capabilities.
+- `json_session_invoke::JsonSessionInvokeAdapter::registerFunction(...)`: also supports plain stateless function registration directly, so one session adapter can host both stateless tools and stateful object lifecycles.
+- `json_session_invoke::JsonSessionInvokeAdapter::registerFunction(...)` intentionally rejects member function pointers; stateful member methods must be registered through `stateful<T>(...).method(...)` so the session boundary stays explicit.
 - `json_session_invoke::JsonSessionInvokeAdapter::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
@@ -143,6 +145,23 @@ API notes
 Supported request shapes
 
 Stateful flows use the same request envelope through `json_session_invoke`. A create tool can return a handle like `{ "object_id": "obj_1", "object_type": "counter" }`, and later tools can accept that handle as a regular argument.
+
+You can also mix stateless and stateful tools on the same `JsonSessionInvokeAdapter` instance:
+
+```cpp
+json_session_invoke::JsonSessionInvokeAdapter adapter;
+
+adapter.registerFunction(
+  "sum",
+  [](int left, int right) { return left + right; },
+  func_registry::FunctionMetadata{{"left", "right"}, "Add two integers."});
+
+adapter
+  .stateful<Counter>("counter")
+  .create([](int initial) { return std::make_shared<Counter>(initial); })
+  .method("counter_add", &Counter::add)
+  .method("counter_value", &Counter::current);
+```
 
 ```json
 {

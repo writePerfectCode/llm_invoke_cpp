@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #include <func_registry/func_registry.hpp>
@@ -27,6 +28,11 @@ struct Counter {
     int current() const
     {
         return value;
+    }
+
+    static int clampDelta(int delta)
+    {
+        return delta < 0 ? 0 : delta;
     }
 };
 
@@ -108,6 +114,58 @@ TEST_CASE("json_stateful preserves object state across repeated tool calls")
     CHECK(handle_schema.at("properties").contains("object_id"));
     CHECK(handle_schema.at("properties").contains("object_type"));
     CHECK(schema.at("function").at("parameters").at("required") == json_session_invoke::json::array({"handle", "delta"}));
+}
+
+TEST_CASE("json_session_invoke can also register stateless functions directly")
+{
+    json_session_invoke::JsonSessionInvokeAdapter adapter;
+
+    adapter.registerFunction(
+        "sum",
+        [](int left, int right) { return left + right; },
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers without session state."});
+
+    const auto response = adapter.invokeJson(
+        {{"name", "sum"}, {"args", {{"left", 2}, {"right", 5}}}});
+    CHECK(response.at("ok").get<bool>());
+    CHECK(response.at("value").get<int>() == 7);
+
+    const auto schema = adapter.getToolSchemaJson("sum");
+    CHECK(schema.at("function").at("name").get<std::string>() == "sum");
+    CHECK_FALSE(schema.at("function").contains("x-stateful-kind"));
+}
+
+TEST_CASE("json_session_invoke rejects direct member function registration")
+{
+    json_session_invoke::JsonSessionInvokeAdapter adapter;
+
+    CHECK_THROWS_AS(adapter.registerFunction("counter_value", &Counter::current), std::invalid_argument);
+    CHECK_THROWS_AS(adapter.registerFunction("counter_value", &Counter::current, "Read the current counter value."), std::invalid_argument);
+    CHECK_THROWS_AS(
+        adapter.registerFunction(
+            "counter_value",
+            &Counter::current,
+            func_registry::FunctionMetadata{{"handle"}, "Read the current counter value."}),
+        std::invalid_argument);
+}
+
+TEST_CASE("json_session_invoke allows static member function registration as stateless")
+{
+    json_session_invoke::JsonSessionInvokeAdapter adapter;
+
+    adapter.registerFunction(
+        "clamp_delta",
+        &Counter::clampDelta,
+        func_registry::FunctionMetadata{{"delta"}, "Clamp one delta without requiring session state."});
+
+    const auto response = adapter.invokeJson(
+        {{"name", "clamp_delta"}, {"args", {{"delta", -4}}}});
+    CHECK(response.at("ok").get<bool>());
+    CHECK(response.at("value").get<int>() == 0);
+
+    const auto schema = adapter.getToolSchemaJson("clamp_delta");
+    CHECK(schema.at("function").at("name").get<std::string>() == "clamp_delta");
+    CHECK_FALSE(schema.at("function").contains("x-stateful-kind"));
 }
 
 TEST_CASE("json_stateful reports invalid handles and destroy lifecycle")
