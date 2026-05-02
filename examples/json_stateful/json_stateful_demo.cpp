@@ -56,7 +56,7 @@ int main()
 
     adapter.registerFunction(
         "sum",
-        [](int left, int right) { return left + right; },
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
         json_invoke::FunctionMetadata{{"left", "right"}, "Add two integers without session state."});
 
     adapter

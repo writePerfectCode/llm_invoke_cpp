@@ -84,6 +84,10 @@ TEST_CASE("json_stateful preserves object state across repeated tool calls")
 {
     CounterHarness harness;
 
+    const auto create_schema = harness.adapter.getToolSchemaJson("create_counter");
+    CHECK(create_schema.at("function").at("x-stateful-kind").get<std::string>() == "factory");
+    CHECK(create_schema.at("function").at("x-execution-semantics").get<std::string>() == "mutating");
+
     const json_session_invoke::SessionObjectHandle handle = harness.create(4);
     CHECK(handle.object_type == "counter");
     CHECK(!handle.object_id.empty());
@@ -114,6 +118,10 @@ TEST_CASE("json_stateful preserves object state across repeated tool calls")
     CHECK(handle_schema.at("properties").contains("object_id"));
     CHECK(handle_schema.at("properties").contains("object_type"));
     CHECK(schema.at("function").at("parameters").at("required") == json_session_invoke::json::array({"handle", "delta"}));
+    CHECK(schema.at("function").at("x-execution-semantics").get<std::string>() == "mutating");
+
+    const auto value_schema = harness.adapter.getToolSchemaJson("counter_value");
+    CHECK(value_schema.at("function").at("x-execution-semantics").get<std::string>() == "read_only");
 }
 
 TEST_CASE("json_session_invoke can also register stateless functions directly")
@@ -133,6 +141,39 @@ TEST_CASE("json_session_invoke can also register stateless functions directly")
     const auto schema = adapter.getToolSchemaJson("sum");
     CHECK(schema.at("function").at("name").get<std::string>() == "sum");
     CHECK_FALSE(schema.at("function").contains("x-stateful-kind"));
+}
+
+TEST_CASE("json_session_invoke forwards explicit execution semantics for wrapped stateless tools")
+{
+    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    std::string log;
+
+    adapter.registerFunction(
+        "sum",
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers without session state."});
+
+    adapter.registerFunction(
+        "append_log",
+        json_invoke::mutating([&log](std::string suffix) {
+            log += suffix;
+            return log.size();
+        }),
+        func_registry::FunctionMetadata{{"suffix"}, "Append one suffix without session objects."});
+
+    const auto sum_schema = adapter.getToolSchemaJson("sum");
+    CHECK(sum_schema.at("function").at("x-execution-semantics").get<std::string>() == "read_only");
+    CHECK_FALSE(sum_schema.at("function").contains("x-stateful-kind"));
+
+    const auto append_spec = adapter.getToolSpecJson("append_log");
+    CHECK(append_spec.at("x-execution-semantics").get<std::string>() == "mutating");
+    CHECK_FALSE(append_spec.contains("x-stateful-kind"));
+
+    const auto response = adapter.invokeJson(
+        {{"name", "append_log"}, {"args", {{"suffix", "!"}}}});
+    CHECK(response.at("ok").get<bool>());
+    CHECK(response.at("value").get<std::size_t>() == 1);
+    CHECK(log == "!");
 }
 
 TEST_CASE("json_session_invoke rejects direct member function registration")
@@ -216,6 +257,7 @@ TEST_CASE("json_stateful builder auto registers default destroy when omitted")
     const auto destroy_schema = adapter.getToolSchemaJson("destroy_counter");
     CHECK(destroy_schema.at("function").at("name").get<std::string>() == "destroy_counter");
     CHECK(destroy_schema.at("function").at("x-stateful-kind").get<std::string>() == "destroy");
+    CHECK(destroy_schema.at("function").at("x-execution-semantics").get<std::string>() == "mutating");
     CHECK(destroy_schema.at("function").at("x-handle-source-tool").get<std::string>() == "create_counter");
 
     const auto destroy_response = adapter.invokeJson(

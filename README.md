@@ -73,7 +73,7 @@ struct json_invoke::json_traits<Person> {
 };
 
 json_invoke::JsonInvokeAdapter adapter;
-adapter.registerFunction("get_person", [] { return Person{"Alice", 30}; }, "Return one person.");
+adapter.registerFunction("get_person", json_invoke::readOnly([] { return Person{"Alice", 30}; }), "Return one person.");
 std::cout << adapter.invoke({{"name", "get_person"}, {"args", json_invoke::json::array()}}).dump(2) << std::endl;
 ```
 
@@ -113,6 +113,7 @@ API notes
 - `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
 - `json_invoke::JsonInvokeAdapter()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
 - `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
+- Wrap stateless tools with `json_invoke::readOnly(...)` or `json_invoke::mutating(...)` when you want exported metadata to include `x-execution-semantics`.
 - `json_invoke::JsonInvokeAdapter::getToolSpecJson(...)` / `getAllToolSpecsJson()`: export JSON tool metadata directly from the adapter without separately managing a registry object.
 - `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
 - `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.
@@ -153,7 +154,7 @@ json_session_invoke::JsonSessionInvokeAdapter adapter;
 
 adapter.registerFunction(
   "sum",
-  [](int left, int right) { return left + right; },
+  json_invoke::readOnly([](int left, int right) { return left + right; }),
   func_registry::FunctionMetadata{{"left", "right"}, "Add two integers."});
 
 adapter
@@ -162,6 +163,8 @@ adapter
   .method("counter_add", &Counter::add)
   .method("counter_value", &Counter::current);
 ```
+
+Stateful tools infer execution semantics automatically: factories and destroy tools export `mutating`, non-const methods export `mutating`, and const methods export `read_only`.
 
 ```json
 {

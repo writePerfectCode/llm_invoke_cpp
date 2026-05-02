@@ -59,6 +59,7 @@ public:
 
     struct StatefulToolMetadata {
         StatefulToolKind kind{StatefulToolKind::method};
+        json_invoke::ToolExecutionSemantics execution_semantics{json_invoke::ToolExecutionSemantics::unknown};
         std::type_index object_cpp_type{typeid(void)};
         std::string object_type_name;
         std::string factory_tool_name;
@@ -151,6 +152,7 @@ public:
 
         StatefulToolMetadata tool_metadata;
         tool_metadata.kind = StatefulToolKind::method;
+        tool_metadata.execution_semantics = methodExecutionSemantics<ObjectArg>();
         tool_metadata.object_cpp_type = typeid(ObjectType);
         tool_metadata.object_type_name = object_type_name;
         tool_metadata.handle_parameter_name = handle_parameter_name;
@@ -181,6 +183,8 @@ public:
         {
             appendDescription(summary["description"], handleUsageSuffix(it->second.factory_tool_name));
         }
+
+        summary["x-execution-semantics"] = executionSemanticsName(it->second.execution_semantics);
 
         return summary;
     }
@@ -214,6 +218,8 @@ public:
             spec["x-handle-source-tool"] = it->second.factory_tool_name;
         }
 
+        spec["x-execution-semantics"] = executionSemanticsName(it->second.execution_semantics);
+
         return spec;
     }
 
@@ -231,6 +237,7 @@ public:
             appendDescription(function["description"], factorySchemaSuffix());
             function["x-stateful-kind"] = "factory";
             function["x-object-type"] = it->second.object_type_name;
+            function["x-execution-semantics"] = executionSemanticsName(it->second.execution_semantics);
 
             json_invoke::json related_tools = json_invoke::json::array();
             const auto methods_it = method_tools_by_object_type_.find(it->second.object_cpp_type);
@@ -266,6 +273,7 @@ public:
 
         function["x-stateful-kind"] = it->second.kind == StatefulToolKind::method ? "method" : "destroy";
         function["x-object-type"] = it->second.object_type_name;
+        function["x-execution-semantics"] = executionSemanticsName(it->second.execution_semantics);
         function["x-handle-parameter"] = it->second.handle_parameter_name;
         if (!it->second.factory_tool_name.empty())
         {
@@ -278,6 +286,22 @@ public:
     }
 
 private:
+    template<typename ObjectArg>
+    static json_invoke::ToolExecutionSemantics methodExecutionSemantics()
+    {
+        if constexpr (std::is_const_v<std::remove_reference_t<ObjectArg>>)
+        {
+            return json_invoke::ToolExecutionSemantics::read_only;
+        }
+
+        return json_invoke::ToolExecutionSemantics::mutating;
+    }
+
+    static std::string_view executionSemanticsName(json_invoke::ToolExecutionSemantics semantics)
+    {
+        return json_invoke::toolExecutionSemanticsName(semantics);
+    }
+
     template<typename Fn, typename FromJsonFn, std::size_t... I>
     auto makeMethodWrapper(Fn&& fn, FromJsonFn&& from_json, std::index_sequence<I...>)
     {
@@ -357,6 +381,7 @@ private:
 
         StatefulToolMetadata metadata;
         metadata.kind = StatefulToolKind::factory;
+        metadata.execution_semantics = json_invoke::ToolExecutionSemantics::mutating;
         metadata.object_cpp_type = typeid(T);
         metadata.object_type_name = object_type_name;
         metadata.factory_tool_name = name;
@@ -371,6 +396,7 @@ private:
 
         StatefulToolMetadata metadata;
         metadata.kind = StatefulToolKind::destroy;
+        metadata.execution_semantics = json_invoke::ToolExecutionSemantics::mutating;
         metadata.object_cpp_type = typeid(T);
         metadata.object_type_name = object_type_name;
         metadata.factory_tool_name = factoryToolName(typeid(T));

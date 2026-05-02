@@ -33,6 +33,32 @@ using func_registry::getToolSpec;
 
 class JsonTypeRegistry;
 
+template<typename Fn>
+struct AnnotatedTool {
+    using callable_type = Fn;
+
+    Fn fn;
+    ToolExecutionSemantics semantics{ToolExecutionSemantics::unknown};
+};
+
+template<typename Fn>
+auto readOnly(Fn&& fn)
+{
+    return AnnotatedTool<std::decay_t<Fn>>{
+        std::forward<Fn>(fn),
+        ToolExecutionSemantics::read_only,
+    };
+}
+
+template<typename Fn>
+auto mutating(Fn&& fn)
+{
+    return AnnotatedTool<std::decay_t<Fn>>{
+        std::forward<Fn>(fn),
+        ToolExecutionSemantics::mutating,
+    };
+}
+
 namespace detail {
 
 template<typename T>
@@ -213,6 +239,67 @@ using callable_traits_t = std::conditional_t<
     std::is_member_function_pointer_v<std::decay_t<Fn>>,
     func_registry::member_function_traits<std::decay_t<Fn>>,
     func_registry::function_traits<std::decay_t<Fn>>>;
+
+template<typename T>
+struct is_annotated_tool : std::false_type {};
+
+template<typename Fn>
+struct is_annotated_tool<AnnotatedTool<Fn>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_annotated_tool_v = is_annotated_tool<remove_cvref_t<T>>::value;
+
+template<typename T, bool IsAnnotated = is_annotated_tool_v<T>>
+struct unwrapped_callable;
+
+template<typename T>
+struct unwrapped_callable<T, false> {
+    using type = remove_cvref_t<T>;
+};
+
+template<typename T>
+struct unwrapped_callable<T, true> {
+    using type = typename remove_cvref_t<T>::callable_type;
+};
+
+template<typename T>
+using unwrapped_callable_t = typename unwrapped_callable<T>::type;
+
+template<typename T, bool IsAnnotated = is_annotated_tool_v<T>>
+struct unwrap_callable_value;
+
+template<typename T>
+struct unwrap_callable_value<T, false> {
+    static decltype(auto) apply(T&& value)
+    {
+        return std::forward<T>(value);
+    }
+};
+
+template<typename T>
+struct unwrap_callable_value<T, true> {
+    static decltype(auto) apply(T&& value)
+    {
+        return std::forward<T>(value).fn;
+    }
+};
+
+template<typename T>
+decltype(auto) unwrapCallable(T&& value)
+{
+    return unwrap_callable_value<T>::apply(std::forward<T>(value));
+}
+
+template<typename T>
+std::optional<ToolExecutionSemantics> annotatedExecutionSemantics(const T& value)
+{
+    if constexpr (is_annotated_tool_v<T>)
+    {
+        return value.semantics;
+    }
+
+    return std::nullopt;
+}
 
 inline void ensureSuccessfulResponse(const json& response)
 {
@@ -506,56 +593,71 @@ public:
     requires (!std::is_same_v<std::remove_cvref_t<Fn>, AnyCallable>)
     void registerFunction(const std::string& name, Fn&& fn)
     {
-        AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
-        func_registry::registerCallableTypeIntrospection<Fn>();
+        using Callable = detail::unwrapped_callable_t<Fn>;
+        const auto semantics = detail::annotatedExecutionSemantics(fn);
+        AnyCallable callable = func_registry::makeCallable(detail::unwrapCallable(std::forward<Fn>(fn)));
+        func_registry::registerCallableTypeIntrospection<Callable>();
         func_registry_.registerFunction(name, std::move(callable));
-        autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
+        annotateToolExecutionSemantics(name, semantics);
+        autoRegisterTypes(name, makeCallableTypeHooks<Callable>());
     }
 
     template<typename Fn>
     requires (!std::is_same_v<std::remove_cvref_t<Fn>, AnyCallable>)
     void registerFunction(const std::string& name, Fn&& fn, FunctionMetadata metadata)
     {
-        AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
-        func_registry::registerCallableTypeIntrospection<Fn>();
+        using Callable = detail::unwrapped_callable_t<Fn>;
+        const auto semantics = detail::annotatedExecutionSemantics(fn);
+        AnyCallable callable = func_registry::makeCallable(detail::unwrapCallable(std::forward<Fn>(fn)));
+        func_registry::registerCallableTypeIntrospection<Callable>();
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
-        autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
+        annotateToolExecutionSemantics(name, semantics);
+        autoRegisterTypes(name, makeCallableTypeHooks<Callable>());
     }
 
     template<typename Fn>
     requires (!std::is_same_v<std::remove_cvref_t<Fn>, AnyCallable>)
     void registerFunction(const std::string& name, Fn&& fn, std::string description)
     {
-        AnyCallable callable = func_registry::makeCallable(std::forward<Fn>(fn));
-        func_registry::registerCallableTypeIntrospection<Fn>();
+        using Callable = detail::unwrapped_callable_t<Fn>;
+        const auto semantics = detail::annotatedExecutionSemantics(fn);
+        AnyCallable callable = func_registry::makeCallable(detail::unwrapCallable(std::forward<Fn>(fn)));
+        func_registry::registerCallableTypeIntrospection<Callable>();
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
-        autoRegisterTypes(name, makeCallableTypeHooks<Fn>());
+        annotateToolExecutionSemantics(name, semantics);
+        autoRegisterTypes(name, makeCallableTypeHooks<Callable>());
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& name, Fn&& fn)
     {
-        AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
+        const auto semantics = detail::annotatedExecutionSemantics(fn);
+        AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerSignatureTypeIntrospection<R(Args...)>();
         func_registry_.registerFunction(name, std::move(callable));
+        annotateToolExecutionSemantics(name, semantics);
         autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& name, Fn&& fn, FunctionMetadata metadata)
     {
-        AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
+        const auto semantics = detail::annotatedExecutionSemantics(fn);
+        AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerSignatureTypeIntrospection<R(Args...)>();
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
+        annotateToolExecutionSemantics(name, semantics);
         autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& name, Fn&& fn, std::string description)
     {
-        AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(std::forward<Fn>(fn));
+        const auto semantics = detail::annotatedExecutionSemantics(fn);
+        AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerSignatureTypeIntrospection<R(Args...)>();
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
+        annotateToolExecutionSemantics(name, semantics);
         autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
@@ -624,30 +726,78 @@ public:
 
     json getToolSpecJson(const std::string& name) const
     {
-        return json_invoke::getToolSpecJson(func_registry_, name);
+        return applyToolExecutionSemanticsToToolJson(name, json_invoke::getToolSpecJson(func_registry_, name));
     }
 
     json getAllToolSpecsJson() const
     {
-        return json_invoke::getAllToolSpecsJson(func_registry_);
+        json tools = json_invoke::getAllToolSpecsJson(func_registry_);
+        for (auto& tool : tools)
+        {
+            const std::string tool_name = tool.value("tool_name", "");
+            tool = applyToolExecutionSemanticsToToolJson(tool_name, std::move(tool));
+        }
+        return tools;
     }
 
     json getAllToolSummariesJson() const
     {
-        return json_invoke::getAllToolSummariesJson(func_registry_);
+        json tools = json_invoke::getAllToolSummariesJson(func_registry_);
+        for (auto& tool : tools)
+        {
+            const std::string tool_name = tool.value("name", "");
+            tool = applyToolExecutionSemanticsToToolJson(tool_name, std::move(tool));
+        }
+        return tools;
     }
 
     json getToolSchemaJson(const std::string& name) const
     {
-        return json_invoke::getToolSchemaJson(func_registry_, name);
+        return applyToolExecutionSemanticsToSchemaJson(name, json_invoke::getToolSchemaJson(func_registry_, name));
     }
 
     json getAllToolSchemasJson() const
     {
-        return json_invoke::getAllToolSchemasJson(func_registry_);
+        json tools = json_invoke::getAllToolSchemasJson(func_registry_);
+        for (auto& tool : tools)
+        {
+            const std::string tool_name = tool.at("function").value("name", "");
+            tool = applyToolExecutionSemanticsToSchemaJson(tool_name, std::move(tool));
+        }
+        return tools;
     }
 
 private:
+    void annotateToolExecutionSemantics(const std::string& name, std::optional<ToolExecutionSemantics> semantics)
+    {
+        if (semantics.has_value())
+        {
+            tool_execution_semantics_[name] = *semantics;
+        }
+    }
+
+    json applyToolExecutionSemanticsToToolJson(const std::string& name, json tool) const
+    {
+        const auto it = tool_execution_semantics_.find(name);
+        if (it != tool_execution_semantics_.end())
+        {
+            tool["x-execution-semantics"] = toolExecutionSemanticsName(it->second);
+        }
+
+        return tool;
+    }
+
+    json applyToolExecutionSemanticsToSchemaJson(const std::string& name, json schema) const
+    {
+        const auto it = tool_execution_semantics_.find(name);
+        if (it != tool_execution_semantics_.end())
+        {
+            schema["function"]["x-execution-semantics"] = toolExecutionSemanticsName(it->second);
+        }
+
+        return schema;
+    }
+
     template<typename Traits, std::size_t... I>
     static AutoRegistrationHooks makeTypeHooks(std::index_sequence<I...>)
     {
@@ -1022,6 +1172,7 @@ private:
     MapType owned_func_registry_{};
     MapType& func_registry_;
     JsonTypeRegistry registry_;
+    std::unordered_map<std::string, ToolExecutionSemantics> tool_execution_semantics_;
 };
 
 using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;

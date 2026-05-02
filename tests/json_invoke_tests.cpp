@@ -124,6 +124,42 @@ TEST_CASE("json_invoke exports enum-aware schemas and structured errors")
     CHECK(bad_type.at("error").at("message").get<std::string>().find("affected_users") != std::string::npos);
 }
 
+TEST_CASE("json_invoke exports explicit execution semantics for wrapped stateless tools")
+{
+    json_invoke::JsonInvokeAdapter adapter;
+    std::string log;
+
+    adapter.registerFunction(
+        "sum",
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers."});
+
+    adapter.registerFunction(
+        "append_log",
+        json_invoke::mutating([&log](std::string suffix) {
+            log += suffix;
+            return log.size();
+        }),
+        func_registry::FunctionMetadata{{"suffix"}, "Append one suffix to the log."});
+
+    const auto sum_schema = adapter.getToolSchemaJson("sum");
+    CHECK(sum_schema.at("function").at("x-execution-semantics").get<std::string>() == "read_only");
+
+    const auto append_spec = adapter.getToolSpecJson("append_log");
+    CHECK(append_spec.at("x-execution-semantics").get<std::string>() == "mutating");
+
+    const auto summaries = adapter.getAllToolSummariesJson();
+    REQUIRE(summaries.size() == 2);
+    CHECK(summaries[0].contains("x-execution-semantics"));
+    CHECK(summaries[1].contains("x-execution-semantics"));
+
+    const auto response = adapter.invokeJson(
+        {{"name", "append_log"}, {"args", {{"suffix", "!"}}}});
+    CHECK(response.at("ok").get<bool>());
+    CHECK(response.at("value").get<std::size_t>() == 1);
+    CHECK(log == "!");
+}
+
 TEST_CASE("json_invoke tool metadata matches JSON snapshots")
 {
     const auto adapter = makeSnapshotAdapter();

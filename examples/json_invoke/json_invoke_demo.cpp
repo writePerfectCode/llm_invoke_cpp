@@ -9,37 +9,37 @@ int main()
 {
     json_invoke::JsonInvokeAdapter adapter;
 
-    adapter.registerFunction("add", [](int x, int y) { return x + y; }, "Add two integers.");
-    adapter.registerFunction("getPerson", getPerson, "Construct one person.");
+    adapter.registerFunction("add", json_invoke::readOnly([](int x, int y) { return x + y; }), "Add two integers.");
+    adapter.registerFunction("getPerson", json_invoke::readOnly(getPerson), "Construct one person.");
     adapter.registerFunction(
         "describePerson",
-        &Person::describe,
+        json_invoke::readOnly(&Person::describe),
         json_invoke::FunctionMetadata{{"person"}, "Call Person::describe() for one person."});
     adapter.registerFunction(
         "countPeopleAtLeastAge",
-        countPeopleAtLeastAge,
+        json_invoke::readOnly(countPeopleAtLeastAge),
         json_invoke::FunctionMetadata{{"people", "minimum_age"}, "Count how many people in a JSON roster meet a minimum age."});
     adapter.registerFunction(
         "countPeopleAtLeastAgeByTeam",
-        countPeopleAtLeastAgeByTeam,
+        json_invoke::readOnly(countPeopleAtLeastAgeByTeam),
         json_invoke::FunctionMetadata{
             {"team_rosters", "minimum_age"},
             "Count how many people in each team roster meet a minimum age."});
     adapter.registerFunction(
         "oldestPersonByQueue",
-        oldestPersonByQueue,
+        json_invoke::readOnly(oldestPersonByQueue),
         json_invoke::FunctionMetadata{
             {"queue_rosters"},
             "Find the oldest person in each support queue."});
     adapter.registerFunction(
         "displayNickname",
-        [](std::optional<std::string> nickname) {
+        json_invoke::readOnly([](std::optional<std::string> nickname) {
             return nickname.value_or("anonymous");
-        },
+        }),
         json_invoke::FunctionMetadata{{"nickname"}, "Return the nickname or a default when omitted."});
     adapter.registerFunction(
         "recommendIncidentPriority",
-        recommendIncidentPriority,
+        json_invoke::readOnly(recommendIncidentPriority),
         json_invoke::FunctionMetadata{
             {"requested_priority", "customer_blocked", "production_impact", "affected_users"},
             "Recommend an incident priority from request urgency and customer impact."});
