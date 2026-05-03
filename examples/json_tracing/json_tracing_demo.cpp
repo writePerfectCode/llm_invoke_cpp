@@ -1,11 +1,9 @@
 #include <chrono>
-#include <ctime>
-#include <iomanip>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 
+#include <tools/trace_recorder.hpp>
 #include <json_session_invoke/json_session_invoke.hpp>
 
 namespace {
@@ -40,35 +38,11 @@ void printResponse(const std::string& label, const json_invoke::json& response)
     std::cout << response.dump(2) << std::endl;
 }
 
-std::string formatTimestamp(std::chrono::system_clock::time_point timestamp)
-{
-    const auto now_time = std::chrono::system_clock::to_time_t(timestamp);
-    std::tm local_time{};
-#if defined(_WIN32)
-    localtime_s(&local_time, &now_time);
-#else
-    localtime_r(&now_time, &local_time);
-#endif
-
-    const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(timestamp.time_since_epoch()) % 1000;
-
-    std::ostringstream builder;
-    builder << std::put_time(&local_time, "%H:%M:%S")
-            << '.'
-            << std::setw(3) << std::setfill('0') << millis.count();
-    return builder.str();
-}
-
 void installTracePrinter(json_session_invoke::JsonSessionInvokeAdapter& adapter)
 {
     adapter.setTraceSink([](const json_invoke::TraceEvent& event) {
-        std::cout << "\n[trace " << formatTimestamp(event.timestamp) << "] " << json_invoke::traceEventKindName(event.kind);
-        if (!event.tool_name.empty())
-        {
-            std::cout << " tool=" << event.tool_name;
-        }
-        std::cout << std::endl;
-        std::cout << event.payload.dump(2) << std::endl;
+        std::cout << "\n[trace]" << std::endl;
+        std::cout << json_invoke::traceEventToJson(event).dump(2) << std::endl;
     });
 }
 

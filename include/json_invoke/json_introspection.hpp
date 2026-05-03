@@ -3,10 +3,14 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include "json_common.hpp"
+
+#include <nlohmann/json.hpp>
+
 #include "../tool_meta/tool_introspection.hpp"
 
 namespace json_invoke {
+
+using json = nlohmann::json;
 
 inline json typeSchemaToJson(const func_registry::TypeSchema& schema);
 

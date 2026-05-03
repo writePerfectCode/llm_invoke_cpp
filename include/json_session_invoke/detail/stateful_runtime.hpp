@@ -11,7 +11,8 @@
 #include <utility>
 #include <vector>
 
-#include <json_invoke/json_common.hpp>
+#include <json_invoke/json_tool_execution_semantics.hpp>
+#include <json_invoke/json_trace.hpp>
 #include <func_registry/func_registry.hpp>
 #include <json_session_invoke/json_session_support.hpp>
 
@@ -44,9 +45,9 @@ class BasicStatefulRuntime {
 public:
     using Store = json_session_invoke::detail::BasicStatefulObjectStore<EnableThreadSafety>;
 
-    void setTraceSink(json_invoke::TraceSink trace_sink)
+    void setTraceDispatcher(std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher)
     {
-        object_store_.setTraceSink(std::move(trace_sink));
+        object_store_.setTraceDispatcher(std::move(trace_dispatcher));
     }
 
     template<typename T>

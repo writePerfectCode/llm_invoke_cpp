@@ -205,17 +205,31 @@ TEST_CASE("json_session_invoke emits trace events for object create and destroy"
     REQUIRE(events.size() == 6);
     CHECK(events[0].kind == json_invoke::TraceEventKind::invoke_started);
     CHECK(events[0].timestamp.time_since_epoch().count() > 0);
+    CHECK(!events[0].request_id.empty());
+    REQUIRE(events[0].duration.has_value());
     CHECK(events[1].kind == json_invoke::TraceEventKind::object_created);
     CHECK(events[1].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].request_id == events[0].request_id);
+    REQUIRE(events[1].duration.has_value());
+    CHECK(events[1].duration->count() >= events[0].duration->count());
     CHECK(events[1].payload.at("object_type").get<std::string>() == "counter");
     CHECK(events[1].payload.at("object_id").get<std::string>() == handle.object_id);
     CHECK(events[2].kind == json_invoke::TraceEventKind::invoke_finished);
+    CHECK(events[2].request_id == events[0].request_id);
+    REQUIRE(events[2].duration.has_value());
+    CHECK(events[2].duration->count() >= events[1].duration->count());
 
     CHECK(events[3].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[3].request_id != events[0].request_id);
     CHECK(events[4].kind == json_invoke::TraceEventKind::object_destroyed);
     CHECK(events[4].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[4].request_id == events[3].request_id);
+    REQUIRE(events[4].duration.has_value());
     CHECK(events[4].payload.at("object_id").get<std::string>() == handle.object_id);
     CHECK(events[5].kind == json_invoke::TraceEventKind::invoke_finished);
+    CHECK(events[5].request_id == events[3].request_id);
+    REQUIRE(events[5].duration.has_value());
+    CHECK(events[5].duration->count() >= events[4].duration->count());
 }
 
 TEST_CASE("json_session_invoke emits trace events for object expiration")
@@ -251,10 +265,16 @@ TEST_CASE("json_session_invoke emits trace events for object expiration")
 
     REQUIRE(events.size() == 3);
     CHECK(events[0].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(!events[0].request_id.empty());
     CHECK(events[1].kind == json_invoke::TraceEventKind::object_expired);
     CHECK(events[1].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].request_id == events[0].request_id);
+    REQUIRE(events[1].duration.has_value());
     CHECK(events[1].payload.at("object_id").get<std::string>() == handle.object_id);
     CHECK(events[2].kind == json_invoke::TraceEventKind::invoke_failed);
+    CHECK(events[2].request_id == events[0].request_id);
+    REQUIRE(events[2].duration.has_value());
+    CHECK(events[2].duration->count() >= events[1].duration->count());
     CHECK(events[2].payload.at("error").at("code").get<std::string>() == "invalid_object");
 }
 

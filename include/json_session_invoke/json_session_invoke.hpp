@@ -267,11 +267,15 @@ public:
         return StatefulRegistrationBuilder<T>(*this, std::move(object_type_name), std::move(options));
     }
 
-    BasicJsonSessionInvokeAdapter() = default;
+    BasicJsonSessionInvokeAdapter()
+    {
+        runtime_.setTraceDispatcher(invoke_adapter_.sharedTraceDispatcher());
+    }
 
     explicit BasicJsonSessionInvokeAdapter(MapType& func_registry)
         : invoke_adapter_(func_registry)
     {
+        runtime_.setTraceDispatcher(invoke_adapter_.sharedTraceDispatcher());
     }
 
     UnderlyingAdapter& jsonInvokeAdapter() noexcept
@@ -296,8 +300,7 @@ public:
 
     void setTraceSink(json_invoke::TraceSink trace_sink)
     {
-        invoke_adapter_.setTraceSink(trace_sink);
-        runtime_.setTraceSink(std::move(trace_sink));
+        invoke_adapter_.setTraceSink(std::move(trace_sink));
     }
 
     const json_invoke::TraceSink& traceSink() const noexcept

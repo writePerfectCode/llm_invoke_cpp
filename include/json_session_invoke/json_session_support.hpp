@@ -18,7 +18,8 @@
 #include <utility>
 #include <vector>
 
-#include <json_invoke/json_common.hpp>
+#include <json_invoke/json_error.hpp>
+#include <json_invoke/json_trace.hpp>
 #include <json_invoke/json_traits.hpp>
 #include <func_registry/func_registry.hpp>
 #include <type_meta/type_schema.hpp>
@@ -128,7 +129,17 @@ public:
 
     void setTraceSink(json_invoke::TraceSink trace_sink)
     {
-        trace_sink_ = std::move(trace_sink);
+        trace_dispatcher_->setSink(std::move(trace_sink));
+    }
+
+    void setTraceDispatcher(std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher)
+    {
+        trace_dispatcher_ = trace_dispatcher ? std::move(trace_dispatcher) : std::make_shared<json_invoke::TraceDispatcher>();
+    }
+
+    const json_invoke::TraceDispatcher& traceDispatcher() const noexcept
+    {
+        return *trace_dispatcher_;
     }
 
     template<typename T>
@@ -160,12 +171,9 @@ public:
         lock.unlock();
 
         emitPendingTraceEvents(std::move(pending_events));
-        if (trace_sink_)
-        {
-            emitTraceEvent(
-                json_invoke::TraceEventKind::object_created,
-                {{"object_id", object_id}, {"object_type", resolved_object_type_name}});
-        }
+        emitTraceEvent(
+            json_invoke::TraceEventKind::object_created,
+            {{"object_id", object_id}, {"object_type", resolved_object_type_name}});
 
         return ObjectHandle{object_id, resolved_object_type_name};
     }
@@ -200,7 +208,7 @@ public:
 
         lock.unlock();
         emitPendingTraceEvents(std::move(pending_events));
-        if (destroyed && trace_sink_)
+        if (destroyed)
         {
             emitTraceEvent(
                 json_invoke::TraceEventKind::object_destroyed,
@@ -369,13 +377,10 @@ private:
             {
                 if (pending_events != nullptr)
                 {
-                    pending_events->push_back(json_invoke::TraceEvent{
+                    pending_events->push_back(json_invoke::makeTraceEvent(
                         json_invoke::TraceEventKind::object_expired,
-                        std::chrono::system_clock::now(),
                         {},
-                        {{"event", json_invoke::traceEventKindName(json_invoke::TraceEventKind::object_expired)},
-                         {"object_id", it->first},
-                         {"object_type", it->second.object_type}}});
+                        {{"object_id", it->first}, {"object_type", it->second.object_type}}));
                 }
                 it = objects_.erase(it);
                 ++removed;
@@ -392,7 +397,7 @@ private:
 
     PendingTraceEvents makePendingTraceEvents() const
     {
-        if (!trace_sink_)
+        if (!traceDispatcher().enabled())
         {
             return std::nullopt;
         }
@@ -417,26 +422,15 @@ private:
 
     void emitTraceEvents(std::vector<json_invoke::TraceEvent> events) const
     {
-        if (!trace_sink_)
-        {
-            return;
-        }
-
         for (const auto& event : events)
         {
-            trace_sink_(event);
+            traceDispatcher().emit(event);
         }
     }
 
     void emitTraceEvent(json_invoke::TraceEventKind kind, json_invoke::json payload) const
     {
-        if (!trace_sink_)
-        {
-            return;
-        }
-
-        payload["event"] = json_invoke::traceEventKindName(kind);
-        trace_sink_(json_invoke::TraceEvent{kind, std::chrono::system_clock::now(), {}, std::move(payload)});
+        traceDispatcher().emit(kind, {}, std::move(payload));
     }
 
     StoredObject& findObjectLocked(const std::string& object_id)
@@ -485,7 +479,7 @@ private:
     std::unordered_map<std::type_index, std::string> object_type_names_;
     std::unordered_map<std::type_index, std::string> explicit_object_type_names_;
     mutable std::mt19937_64 random_engine_{std::random_device{}()};
-    json_invoke::TraceSink trace_sink_{};
+    std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher_{std::make_shared<json_invoke::TraceDispatcher>()};
 };
 
 } // namespace detail

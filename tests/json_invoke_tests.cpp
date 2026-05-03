@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <json_invoke/json_invoke.hpp>
+#include <tools/trace_recorder.hpp>
 
 #include "snapshot_test_utils.hpp"
 #include "examples/json_invoke/person_support.hpp"
@@ -186,19 +187,53 @@ TEST_CASE("json_invoke emits tracing events for successful and failed calls")
     REQUIRE(events.size() == 4);
     CHECK(events[0].kind == json_invoke::TraceEventKind::invoke_started);
     CHECK(events[0].timestamp.time_since_epoch().count() > 0);
+    CHECK(!events[0].request_id.empty());
     CHECK(events[0].tool_name == "sum");
+    CHECK(events[0].duration.has_value());
     CHECK(events[0].payload.at("request").at("name").get<std::string>() == "sum");
 
     CHECK(events[1].kind == json_invoke::TraceEventKind::invoke_finished);
     CHECK(events[1].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].request_id == events[0].request_id);
+    REQUIRE(events[1].duration.has_value());
+    CHECK(events[1].duration->count() >= events[0].duration->count());
     CHECK(events[1].payload.at("response").at("ok").get<bool>());
     CHECK(events[1].payload.at("response").at("value").get<int>() == 7);
 
     CHECK(events[2].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[2].request_id != events[0].request_id);
     CHECK(events[3].kind == json_invoke::TraceEventKind::invoke_failed);
     CHECK(events[3].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[3].request_id == events[2].request_id);
+    REQUIRE(events[3].duration.has_value());
+    CHECK(events[3].duration->count() >= events[2].duration->count());
     CHECK(events[3].payload.at("error").at("code").get<std::string>() == "invalid_request");
     CHECK(events[3].payload.at("error").at("message").get<std::string>().find("right") != std::string::npos);
+}
+
+TEST_CASE("vector trace recorder captures structured trace events")
+{
+    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::VectorTraceRecorder recorder;
+
+    adapter.setTraceSink(recorder.sink());
+    adapter.registerFunction(
+        "sum",
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers."});
+
+    const auto response = adapter.invokeJson(
+        {{"name", "sum"}, {"args", {{"left", 2}, {"right", 5}}}});
+    REQUIRE(response.at("ok").get<bool>());
+
+    REQUIRE(recorder.events().size() == 2);
+    const auto trace_json = recorder.toJson();
+    REQUIRE(trace_json.size() == 2);
+    CHECK(trace_json[0].at("event").get<std::string>() == "invoke_started");
+    CHECK(trace_json[0].at("payload").at("request").at("name").get<std::string>() == "sum");
+    CHECK(trace_json[1].at("event").get<std::string>() == "invoke_finished");
+    CHECK(trace_json[1].at("request_id").get<std::string>() == trace_json[0].at("request_id").get<std::string>());
+    CHECK(trace_json[1].at("payload").at("response").at("value").get<int>() == 7);
 }
 
 TEST_CASE("json_invoke tool metadata matches JSON snapshots")

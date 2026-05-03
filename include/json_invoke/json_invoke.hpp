@@ -2,6 +2,7 @@
 
 #include <any>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -14,7 +15,9 @@
 #include "../func_registry/func_registry.hpp"
 #include "../tool_meta/tool_introspection.hpp"
 #include "../type_meta/enum_traits.hpp"
-#include "json_common.hpp"
+#include "json_error.hpp"
+#include "json_tool_execution_semantics.hpp"
+#include "json_trace.hpp"
 #include "json_introspection.hpp"
 #include "json_traits.hpp"
 
@@ -591,12 +594,27 @@ public:
 
     void setTraceSink(TraceSink trace_sink)
     {
-        trace_sink_ = std::move(trace_sink);
+        trace_dispatcher_->setSink(std::move(trace_sink));
     }
 
     const TraceSink& traceSink() const noexcept
     {
-        return trace_sink_;
+        return trace_dispatcher_->sink();
+    }
+
+    TraceDispatcher& traceDispatcher() noexcept
+    {
+        return *trace_dispatcher_;
+    }
+
+    const TraceDispatcher& traceDispatcher() const noexcept
+    {
+        return *trace_dispatcher_;
+    }
+
+    std::shared_ptr<TraceDispatcher> sharedTraceDispatcher() const noexcept
+    {
+        return trace_dispatcher_;
     }
 
     template<typename Fn>
@@ -674,6 +692,7 @@ public:
     json invokeJson(const json& request) const
     {
         std::string name;
+        [[maybe_unused]] auto trace_context = traceDispatcher().beginRequest();
 
         try
         {
@@ -796,28 +815,12 @@ private:
     template<typename PayloadFactory>
     void emitTraceEventIfEnabled(TraceEventKind kind, const std::string& name, PayloadFactory&& payload_factory) const
     {
-        if (!trace_sink_)
-        {
-            return;
-        }
-
-        emitTraceEvent(kind, name, std::forward<PayloadFactory>(payload_factory)());
+        traceDispatcher().emitLazy(kind, name, std::forward<PayloadFactory>(payload_factory));
     }
 
     void emitTraceEvent(TraceEventKind kind, const std::string& name, json payload) const
     {
-        if (!trace_sink_)
-        {
-            return;
-        }
-
-        payload["event"] = traceEventKindName(kind);
-        if (!name.empty())
-        {
-            payload["tool_name"] = name;
-        }
-
-        trace_sink_(TraceEvent{kind, std::chrono::system_clock::now(), name, std::move(payload)});
+        traceDispatcher().emit(kind, name, std::move(payload));
     }
 
     void annotateToolExecutionSemantics(const std::string& name, std::optional<ToolExecutionSemantics> semantics)
@@ -1225,7 +1228,7 @@ private:
     MapType& func_registry_;
     JsonTypeRegistry registry_;
     std::unordered_map<std::string, ToolExecutionSemantics> tool_execution_semantics_;
-    TraceSink trace_sink_{};
+    std::shared_ptr<TraceDispatcher> trace_dispatcher_{std::make_shared<TraceDispatcher>()};
 };
 
 using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;

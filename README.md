@@ -18,9 +18,12 @@ Project layout
 - `include/type_meta/type_schema.hpp`: dependency-free structured type schema metadata and custom schema trait hook.
 - `include/type_meta/enum_traits.hpp`: string enum mapping hook for human-friendly enum export and conversion.
 - `include/type_meta/type_introspection.hpp`: optional type-level LLM/schema metadata helpers used by richer tool export.
+- `include/tools/trace_recorder.hpp`: reusable helpers for collecting and serializing structured trace events.
 - `include/json_invoke/json_invoke.hpp`: JSON invocation adapter for pure function registration and JSON-based calls.
 - `include/json_invoke/json_introspection.hpp`: standalone JSON tool/spec/schema export helpers for registry metadata.
-- `include/json_invoke/json_common.hpp`: shared JSON alias and JsonInvokeError definition used by both invoke and introspection layers.
+- `include/json_invoke/json_error.hpp`: `JsonInvokeError` definition for request/response conversion and invocation failures.
+- `include/json_invoke/json_tool_execution_semantics.hpp`: execution semantics enum and naming helpers for exported tool metadata.
+- `include/json_invoke/json_trace.hpp`: tracing event model, request context helpers, and JSON serialization helpers.
 - `include/json_invoke/json_traits.hpp`: trait hook for custom JSON bindings.
 - `include/json_session_invoke/json_session_invoke.hpp`: session-oriented adapter that composes `json_invoke` and exposes stateful factory APIs as the high-level entry point.
 - `include/json_session_invoke/json_session_support.hpp`: session-only object handle, object options, and in-memory object store support.
@@ -81,7 +84,7 @@ std::cout << adapter.invoke({{"name", "get_person"}, {"args", json_invoke::json:
 Tracing demo
 
 - Run `json_tracing_demo` to inspect `TraceSink` output for stateless success/failure, stateful create/destroy, and idle expiration.
-- Each emitted `TraceEvent` now carries its own timestamp, so the demo prints the original event time rather than the sink's current wall clock at print time.
+- Each emitted `TraceEvent` now carries its own `request_id`, `timestamp`, and `duration_ms`, so the demo prints the original event metadata rather than the sink's current wall clock at print time.
 
 Integration
 
@@ -120,7 +123,9 @@ API notes
 - `json_invoke::JsonInvokeAdapter()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
 - `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
 - Wrap stateless tools with `json_invoke::readOnly(...)` or `json_invoke::mutating(...)` when you want exported metadata to include `x-execution-semantics`.
-- `json_invoke::TraceEvent` / `json_invoke::TraceSink`: opt-in tracing hooks for invoke and session lifecycle events; each event includes its kind, timestamp, tool name, and JSON payload.
+- `json_invoke::TraceEvent` / `json_invoke::TraceSink`: opt-in tracing hooks for invoke and session lifecycle events; stable top-level fields include `event`, `timestamp`, `request_id`, `tool_name`, `duration_ms`, and event-specific `payload`.
+- `json_invoke::traceEventToJson(...)`: serialize one `TraceEvent` into the stable JSON shape used by the tracing demo and recorder helpers.
+- `json_invoke::VectorTraceRecorder`: lightweight collector from `include/tools/trace_recorder.hpp` that exposes a ready-to-use `TraceSink` and exports recorded events through `toJson()`.
 - `json_invoke::JsonInvokeAdapter::getToolSpecJson(...)` / `getAllToolSpecsJson()`: export JSON tool metadata directly from the adapter without separately managing a registry object.
 - `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
 - `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.
