@@ -31,6 +31,7 @@ Project layout
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.
 - `examples/json_tracing/json_tracing_demo.cpp`: tracing example for invoke and object lifecycle events.
+- `examples/trace_recorder/trace_recorder_demo.cpp`: focused `VectorTraceRecorder` example that prints each call's response together with the recorded trace slice for that call.
 - `examples/json_invoke/person.hpp`: example-only domain type used by the JSON invocation demo.
 - `examples/json_invoke/person_support.hpp`: example-only JSON bindings and helper functions for `Person`.
 - `examples/json_invoke/priority_support.hpp`: example-only enum mapping and incident-priority helper logic used by the JSON invocation demo.
@@ -85,6 +86,7 @@ Tracing demo
 
 - Run `json_tracing_demo` to inspect `TraceSink` output for stateless success/failure, stateful create/destroy, and idle expiration.
 - Each emitted `TraceEvent` now carries its own `request_id`, `timestamp`, and `duration_ms`, so the demo prints the original event metadata rather than the sink's current wall clock at print time.
+- Run `trace_recorder_demo` when you want a quieter example that records events with `json_invoke::VectorTraceRecorder` and prints each call together with that call's recorded trace JSON.
 
 Integration
 
@@ -204,6 +206,8 @@ ctest --test-dir build --output-on-failure
 .\build\func_registry_demo.exe
 .\build\json_invoke_demo.exe
 .\build\json_stateful_demo.exe
+.\build\json_tracing_demo.exe
+.\build\trace_recorder_demo.exe
 ```
 
 The initial configure step downloads `nlohmann/json` into `build/_deps/` through `FetchContent`.

@@ -83,4 +83,7 @@ if(LLM_INVOKE_CPP_BUILD_EXAMPLES)
 
     add_executable(json_tracing_demo examples/json_tracing/json_tracing_demo.cpp)
     target_link_libraries(json_tracing_demo PRIVATE llm_invoke_cpp::json_session_invoke)
+
+    add_executable(trace_recorder_demo examples/trace_recorder/trace_recorder_demo.cpp)
+    target_link_libraries(trace_recorder_demo PRIVATE llm_invoke_cpp::json_invoke)
 endif()
