@@ -16,6 +16,7 @@
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <json_invoke/json_common.hpp>
 #include <json_invoke/json_traits.hpp>
@@ -125,6 +126,11 @@ public:
         explicit_object_type_names_[typeid(T)] = object_type_names_[typeid(T)];
     }
 
+    void setTraceSink(json_invoke::TraceSink trace_sink)
+    {
+        trace_sink_ = std::move(trace_sink);
+    }
+
     template<typename T>
     ObjectHandle emplace(std::shared_ptr<T> object, std::string object_type_name = {}, ObjectOptions options = {})
     {
@@ -136,8 +142,10 @@ public:
         const std::string resolved_object_type_name = resolveOrRememberObjectTypeName<T>(std::move(object_type_name));
         const auto now = Clock::now();
 
+        auto pending_events = makePendingTraceEvents();
+
         std::unique_lock<MutexType> lock(mutex_);
-        cleanupExpiredObjectsLocked(now);
+        cleanupExpiredObjectsLocked(now, pendingTraceEventsPtr(pending_events));
         const std::string object_id = makeObjectId();
         objects_.emplace(
             object_id,
@@ -149,6 +157,16 @@ public:
                 std::move(options.idle_timeout),
                 now,
                 now});
+        lock.unlock();
+
+        emitPendingTraceEvents(std::move(pending_events));
+        if (trace_sink_)
+        {
+            emitTraceEvent(
+                json_invoke::TraceEventKind::object_created,
+                {{"object_id", object_id}, {"object_type", resolved_object_type_name}});
+        }
+
         return ObjectHandle{object_id, resolved_object_type_name};
     }
 
@@ -165,23 +183,49 @@ public:
     bool destroy(const ObjectHandle& handle)
     {
         ensureObjectId(handle.object_id);
+        auto pending_events = makePendingTraceEvents();
+        std::string destroyed_object_type;
+        bool destroyed = false;
+
         std::unique_lock<MutexType> lock(mutex_);
-        cleanupExpiredObjectsLocked(Clock::now());
-        return objects_.erase(handle.object_id) != 0;
+        cleanupExpiredObjectsLocked(Clock::now(), pendingTraceEventsPtr(pending_events));
+
+        const auto it = objects_.find(handle.object_id);
+        if (it != objects_.end())
+        {
+            destroyed_object_type = it->second.object_type;
+            objects_.erase(it);
+            destroyed = true;
+        }
+
+        lock.unlock();
+        emitPendingTraceEvents(std::move(pending_events));
+        if (destroyed && trace_sink_)
+        {
+            emitTraceEvent(
+                json_invoke::TraceEventKind::object_destroyed,
+                {{"object_id", handle.object_id}, {"object_type", destroyed_object_type}});
+        }
+
+        return destroyed;
     }
 
     bool destroy(std::string_view object_id)
     {
         ensureObjectId(object_id);
-        std::unique_lock<MutexType> lock(mutex_);
-        cleanupExpiredObjectsLocked(Clock::now());
-        return objects_.erase(std::string(object_id)) != 0;
+        return destroy(ObjectHandle{std::string(object_id), {}});
     }
 
     std::size_t cleanupExpiredObjects()
     {
+        auto pending_events = makePendingTraceEvents();
+
         std::unique_lock<MutexType> lock(mutex_);
-        return cleanupExpiredObjectsLocked(Clock::now());
+        const std::size_t removed = cleanupExpiredObjectsLocked(Clock::now(), pendingTraceEventsPtr(pending_events));
+        lock.unlock();
+
+        emitPendingTraceEvents(std::move(pending_events));
+        return removed;
     }
 
     template<typename T>
@@ -195,13 +239,28 @@ public:
     {
         ensureObjectId(handle.object_id);
 
+        auto pending_events = makePendingTraceEvents();
         std::unique_lock<MutexType> lock(mutex_);
         const auto now = Clock::now();
-        cleanupExpiredObjectsLocked(now);
-        StoredObject& entry = findObjectLocked(handle.object_id);
-        validateObjectType(entry, handle, expected_object_type, typeid(T));
-        entry.last_used_at = now;
-        return ObjectAccess<T>{std::static_pointer_cast<T>(entry.object), entry.invocation_mutex};
+        cleanupExpiredObjectsLocked(now, pendingTraceEventsPtr(pending_events));
+
+        try
+        {
+            StoredObject& entry = findObjectLocked(handle.object_id);
+            validateObjectType(entry, handle, expected_object_type, typeid(T));
+            entry.last_used_at = now;
+            auto access = ObjectAccess<T>{std::static_pointer_cast<T>(entry.object), entry.invocation_mutex};
+            lock.unlock();
+
+            emitPendingTraceEvents(std::move(pending_events));
+            return access;
+        }
+        catch (...)
+        {
+            lock.unlock();
+            emitPendingTraceEvents(std::move(pending_events));
+            throw;
+        }
     }
 
     template<typename T>
@@ -300,7 +359,7 @@ private:
         return builder.str();
     }
 
-    std::size_t cleanupExpiredObjectsLocked(Clock::time_point now)
+    std::size_t cleanupExpiredObjectsLocked(Clock::time_point now, std::vector<json_invoke::TraceEvent>* pending_events)
     {
         std::size_t removed = 0;
         for (auto it = objects_.begin(); it != objects_.end();)
@@ -308,6 +367,16 @@ private:
             const auto& timeout = it->second.idle_timeout;
             if (timeout.has_value() && now - it->second.last_used_at >= *timeout)
             {
+                if (pending_events != nullptr)
+                {
+                    pending_events->push_back(json_invoke::TraceEvent{
+                        json_invoke::TraceEventKind::object_expired,
+                        std::chrono::system_clock::now(),
+                        {},
+                        {{"event", json_invoke::traceEventKindName(json_invoke::TraceEventKind::object_expired)},
+                         {"object_id", it->first},
+                         {"object_type", it->second.object_type}}});
+                }
                 it = objects_.erase(it);
                 ++removed;
                 continue;
@@ -317,6 +386,57 @@ private:
         }
 
         return removed;
+    }
+
+    using PendingTraceEvents = std::optional<std::vector<json_invoke::TraceEvent>>;
+
+    PendingTraceEvents makePendingTraceEvents() const
+    {
+        if (!trace_sink_)
+        {
+            return std::nullopt;
+        }
+
+        return std::vector<json_invoke::TraceEvent>{};
+    }
+
+    static std::vector<json_invoke::TraceEvent>* pendingTraceEventsPtr(PendingTraceEvents& pending_events)
+    {
+        return pending_events ? &*pending_events : nullptr;
+    }
+
+    void emitPendingTraceEvents(PendingTraceEvents pending_events) const
+    {
+        if (!pending_events.has_value())
+        {
+            return;
+        }
+
+        emitTraceEvents(std::move(*pending_events));
+    }
+
+    void emitTraceEvents(std::vector<json_invoke::TraceEvent> events) const
+    {
+        if (!trace_sink_)
+        {
+            return;
+        }
+
+        for (const auto& event : events)
+        {
+            trace_sink_(event);
+        }
+    }
+
+    void emitTraceEvent(json_invoke::TraceEventKind kind, json_invoke::json payload) const
+    {
+        if (!trace_sink_)
+        {
+            return;
+        }
+
+        payload["event"] = json_invoke::traceEventKindName(kind);
+        trace_sink_(json_invoke::TraceEvent{kind, std::chrono::system_clock::now(), {}, std::move(payload)});
     }
 
     StoredObject& findObjectLocked(const std::string& object_id)
@@ -365,6 +485,7 @@ private:
     std::unordered_map<std::type_index, std::string> object_type_names_;
     std::unordered_map<std::type_index, std::string> explicit_object_type_names_;
     mutable std::mt19937_64 random_engine_{std::random_device{}()};
+    json_invoke::TraceSink trace_sink_{};
 };
 
 } // namespace detail

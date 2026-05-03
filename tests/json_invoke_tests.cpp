@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <json_invoke/json_invoke.hpp>
 
@@ -158,6 +159,46 @@ TEST_CASE("json_invoke exports explicit execution semantics for wrapped stateles
     CHECK(response.at("ok").get<bool>());
     CHECK(response.at("value").get<std::size_t>() == 1);
     CHECK(log == "!");
+}
+
+TEST_CASE("json_invoke emits tracing events for successful and failed calls")
+{
+    json_invoke::JsonInvokeAdapter adapter;
+    std::vector<json_invoke::TraceEvent> events;
+
+    adapter.setTraceSink([&events](const json_invoke::TraceEvent& event) {
+        events.push_back(event);
+    });
+
+    adapter.registerFunction(
+        "sum",
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers."});
+
+    const auto success = adapter.invokeJson(
+        {{"name", "sum"}, {"args", {{"left", 2}, {"right", 5}}}});
+    REQUIRE(success.at("ok").get<bool>());
+
+    const auto failure = adapter.invokeJson(
+        {{"name", "sum"}, {"args", {{"left", 2}}}});
+    CHECK_FALSE(failure.at("ok").get<bool>());
+
+    REQUIRE(events.size() == 4);
+    CHECK(events[0].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[0].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[0].tool_name == "sum");
+    CHECK(events[0].payload.at("request").at("name").get<std::string>() == "sum");
+
+    CHECK(events[1].kind == json_invoke::TraceEventKind::invoke_finished);
+    CHECK(events[1].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].payload.at("response").at("ok").get<bool>());
+    CHECK(events[1].payload.at("response").at("value").get<int>() == 7);
+
+    CHECK(events[2].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[3].kind == json_invoke::TraceEventKind::invoke_failed);
+    CHECK(events[3].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[3].payload.at("error").at("code").get<std::string>() == "invalid_request");
+    CHECK(events[3].payload.at("error").at("message").get<std::string>().find("right") != std::string::npos);
 }
 
 TEST_CASE("json_invoke tool metadata matches JSON snapshots")

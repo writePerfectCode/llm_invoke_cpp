@@ -294,6 +294,17 @@ public:
         stateful_defaults_ = std::move(defaults);
     }
 
+    void setTraceSink(json_invoke::TraceSink trace_sink)
+    {
+        invoke_adapter_.setTraceSink(trace_sink);
+        runtime_.setTraceSink(std::move(trace_sink));
+    }
+
+    const json_invoke::TraceSink& traceSink() const noexcept
+    {
+        return invoke_adapter_.traceSink();
+    }
+
     const UnderlyingAdapter& jsonInvokeAdapter() const noexcept
     {
         return invoke_adapter_;

@@ -27,6 +27,7 @@ Project layout
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.
+- `examples/json_tracing/json_tracing_demo.cpp`: tracing example for invoke and object lifecycle events.
 - `examples/json_invoke/person.hpp`: example-only domain type used by the JSON invocation demo.
 - `examples/json_invoke/person_support.hpp`: example-only JSON bindings and helper functions for `Person`.
 - `examples/json_invoke/priority_support.hpp`: example-only enum mapping and incident-priority helper logic used by the JSON invocation demo.
@@ -77,6 +78,11 @@ adapter.registerFunction("get_person", json_invoke::readOnly([] { return Person{
 std::cout << adapter.invoke({{"name", "get_person"}, {"args", json_invoke::json::array()}}).dump(2) << std::endl;
 ```
 
+Tracing demo
+
+- Run `json_tracing_demo` to inspect `TraceSink` output for stateless success/failure, stateful create/destroy, and idle expiration.
+- Each emitted `TraceEvent` now carries its own timestamp, so the demo prints the original event time rather than the sink's current wall clock at print time.
+
 Integration
 
 - `func_registry` depends only on the C++ standard library.
@@ -114,6 +120,7 @@ API notes
 - `json_invoke::JsonInvokeAdapter()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
 - `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
 - Wrap stateless tools with `json_invoke::readOnly(...)` or `json_invoke::mutating(...)` when you want exported metadata to include `x-execution-semantics`.
+- `json_invoke::TraceEvent` / `json_invoke::TraceSink`: opt-in tracing hooks for invoke and session lifecycle events; each event includes its kind, timestamp, tool name, and JSON payload.
 - `json_invoke::JsonInvokeAdapter::getToolSpecJson(...)` / `getAllToolSpecsJson()`: export JSON tool metadata directly from the adapter without separately managing a registry object.
 - `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
 - `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.

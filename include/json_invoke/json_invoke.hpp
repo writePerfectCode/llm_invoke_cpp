@@ -589,6 +589,16 @@ public:
         registry_.template registerType<T>(std::forward<FromJson>(from_json), std::forward<ToJson>(to_json));
     }
 
+    void setTraceSink(TraceSink trace_sink)
+    {
+        trace_sink_ = std::move(trace_sink);
+    }
+
+    const TraceSink& traceSink() const noexcept
+    {
+        return trace_sink_;
+    }
+
     template<typename Fn>
     requires (!std::is_same_v<std::remove_cvref_t<Fn>, AnyCallable>)
     void registerFunction(const std::string& name, Fn&& fn)
@@ -669,25 +679,40 @@ public:
         {
             const json& request_object = requireRequestObject(request);
             name = extractFunctionName(request_object);
+            emitTraceEventIfEnabled(TraceEventKind::invoke_started, name, [&request_object]() {
+                return json{{"request", request_object}};
+            });
             FunctionInfo info = getFunctionInfo(name);
             ensureJsonCallable(info);
             std::vector<std::any> packed_args = packArgsFromJson(info, extractArgsNode(request_object));
             FuncCallResult result = call(name, packed_args);
 
-            return json{
+            json response{
                 {"ok", true},
                 {"name", name},
                 {"return_cpp_type_name", info.ret_type_name},
                 {"return_llm_type", func_registry::getTypeIntrospectionOrFallback(info.ret_type).llm_type},
                 {"value", registry_.toJson(result.any(), result.declaredReturnType())},
             };
+
+            emitTraceEventIfEnabled(TraceEventKind::invoke_finished, name, [&response]() {
+                return json{{"response", response}};
+            });
+
+            return response;
         }
         catch (const JsonInvokeError& e)
         {
+            emitTraceEventIfEnabled(TraceEventKind::invoke_failed, name, [&e]() {
+                return json{{"error", {{"code", e.code()}, {"message", e.what()}}}};
+            });
             return makeErrorResponse(name, e.code(), e.what());
         }
         catch (const std::exception& e)
         {
+            emitTraceEventIfEnabled(TraceEventKind::invoke_failed, name, [&e]() {
+                return json{{"error", {{"code", "unknown_error"}, {"message", e.what()}}}};
+            });
             return makeErrorResponse(name, "unknown_error", e.what());
         }
     }
@@ -768,6 +793,33 @@ public:
     }
 
 private:
+    template<typename PayloadFactory>
+    void emitTraceEventIfEnabled(TraceEventKind kind, const std::string& name, PayloadFactory&& payload_factory) const
+    {
+        if (!trace_sink_)
+        {
+            return;
+        }
+
+        emitTraceEvent(kind, name, std::forward<PayloadFactory>(payload_factory)());
+    }
+
+    void emitTraceEvent(TraceEventKind kind, const std::string& name, json payload) const
+    {
+        if (!trace_sink_)
+        {
+            return;
+        }
+
+        payload["event"] = traceEventKindName(kind);
+        if (!name.empty())
+        {
+            payload["tool_name"] = name;
+        }
+
+        trace_sink_(TraceEvent{kind, std::chrono::system_clock::now(), name, std::move(payload)});
+    }
+
     void annotateToolExecutionSemantics(const std::string& name, std::optional<ToolExecutionSemantics> semantics)
     {
         if (semantics.has_value())
@@ -1173,6 +1225,7 @@ private:
     MapType& func_registry_;
     JsonTypeRegistry registry_;
     std::unordered_map<std::string, ToolExecutionSemantics> tool_execution_semantics_;
+    TraceSink trace_sink_{};
 };
 
 using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;

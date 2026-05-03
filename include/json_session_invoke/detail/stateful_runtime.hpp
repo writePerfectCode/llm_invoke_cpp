@@ -44,6 +44,11 @@ class BasicStatefulRuntime {
 public:
     using Store = json_session_invoke::detail::BasicStatefulObjectStore<EnableThreadSafety>;
 
+    void setTraceSink(json_invoke::TraceSink trace_sink)
+    {
+        object_store_.setTraceSink(std::move(trace_sink));
+    }
+
     template<typename T>
     std::string defaultDestroyToolName() const
     {

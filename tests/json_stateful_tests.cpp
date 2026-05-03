@@ -4,6 +4,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <func_registry/func_registry.hpp>
 #include <json_session_invoke/json_session_invoke.hpp>
@@ -174,6 +175,87 @@ TEST_CASE("json_session_invoke forwards explicit execution semantics for wrapped
     CHECK(response.at("ok").get<bool>());
     CHECK(response.at("value").get<std::size_t>() == 1);
     CHECK(log == "!");
+}
+
+TEST_CASE("json_session_invoke emits trace events for object create and destroy")
+{
+    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    std::vector<json_invoke::TraceEvent> events;
+
+    adapter.setTraceSink([&events](const json_invoke::TraceEvent& event) {
+        events.push_back(event);
+    });
+
+    adapter
+        .stateful<Counter>("counter")
+        .create(
+            [](int initial) { return std::make_shared<Counter>(initial); },
+            func_registry::FunctionMetadata{{"initial"}, "Create an in-memory counter."})
+        .destroy();
+
+    const auto create_response = adapter.invokeJson(
+        {{"name", "create_counter"}, {"args", {{"initial", 2}}}});
+    REQUIRE(create_response.at("ok").get<bool>());
+    const auto handle = create_response.at("value").get<json_session_invoke::SessionObjectHandle>();
+
+    const auto destroy_response = adapter.invokeJson(
+        {{"name", "destroy_counter"}, {"args", {{"handle", handle}}}});
+    REQUIRE(destroy_response.at("ok").get<bool>());
+
+    REQUIRE(events.size() == 6);
+    CHECK(events[0].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[0].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].kind == json_invoke::TraceEventKind::object_created);
+    CHECK(events[1].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].payload.at("object_type").get<std::string>() == "counter");
+    CHECK(events[1].payload.at("object_id").get<std::string>() == handle.object_id);
+    CHECK(events[2].kind == json_invoke::TraceEventKind::invoke_finished);
+
+    CHECK(events[3].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[4].kind == json_invoke::TraceEventKind::object_destroyed);
+    CHECK(events[4].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[4].payload.at("object_id").get<std::string>() == handle.object_id);
+    CHECK(events[5].kind == json_invoke::TraceEventKind::invoke_finished);
+}
+
+TEST_CASE("json_session_invoke emits trace events for object expiration")
+{
+    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    std::vector<json_invoke::TraceEvent> events;
+
+    adapter.setTraceSink([&events](const json_invoke::TraceEvent& event) {
+        events.push_back(event);
+    });
+
+    json_session_invoke::SessionObjectOptions counter_options;
+    counter_options.idle_timeout = std::chrono::milliseconds{0};
+
+    adapter
+        .stateful<Counter>("counter", counter_options)
+        .create(
+            [](int initial) { return std::make_shared<Counter>(initial); },
+            func_registry::FunctionMetadata{{"initial"}, "Create an in-memory counter."})
+        .method("counter_value", &Counter::current, "Read the current counter value.");
+
+    const auto create_response = adapter.invokeJson(
+        {{"name", "create_counter"}, {"args", {{"initial", 9}}}});
+    REQUIRE(create_response.at("ok").get<bool>());
+    const auto handle = create_response.at("value").get<json_session_invoke::SessionObjectHandle>();
+
+    events.clear();
+
+    const auto expired_response = adapter.invokeJson(
+        {{"name", "counter_value"}, {"args", {{"handle", handle}}}});
+    CHECK_FALSE(expired_response.at("ok").get<bool>());
+    CHECK(expired_response.at("error").at("code").get<std::string>() == "invalid_object");
+
+    REQUIRE(events.size() == 3);
+    CHECK(events[0].kind == json_invoke::TraceEventKind::invoke_started);
+    CHECK(events[1].kind == json_invoke::TraceEventKind::object_expired);
+    CHECK(events[1].timestamp.time_since_epoch().count() > 0);
+    CHECK(events[1].payload.at("object_id").get<std::string>() == handle.object_id);
+    CHECK(events[2].kind == json_invoke::TraceEventKind::invoke_failed);
+    CHECK(events[2].payload.at("error").at("code").get<std::string>() == "invalid_object");
 }
 
 TEST_CASE("json_session_invoke rejects direct member function registration")
