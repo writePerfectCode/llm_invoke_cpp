@@ -127,11 +127,6 @@ public:
         explicit_object_type_names_[typeid(T)] = object_type_names_[typeid(T)];
     }
 
-    void setTraceSink(json_invoke::TraceSink trace_sink)
-    {
-        trace_dispatcher_->setSink(std::move(trace_sink));
-    }
-
     void setTraceDispatcher(std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher)
     {
         trace_dispatcher_ = trace_dispatcher ? std::move(trace_dispatcher) : std::make_shared<json_invoke::TraceDispatcher>();

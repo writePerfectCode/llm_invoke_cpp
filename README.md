@@ -119,8 +119,7 @@ API notes
 - `func_registry::FunctionMetadata`: attach descriptions and explicit parameter names.
 - `registerFunctionAs(...)`: register a callable under an explicit signature.
 - `describeFunction(name)` / `describeAllFunctions()`: render concise human-readable C++ function summaries.
-- Include `tool_meta/tool_introspection.hpp` for `getToolSpec(name)` / `getAllToolSpecs()` and `renderAllToolSpecs()`.
-- Use `registerToolFunction(...)` / `registerToolFunctionAs(...)` when a plain registry should also populate tool/type metadata for `tool_meta` export.
+- Include `tool_meta/tool_introspection.hpp` for `getToolSpec(name)` / `getAllToolSpecs()`.
 - `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
 - `json_invoke::JsonInvokeAdapter()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
 - `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
