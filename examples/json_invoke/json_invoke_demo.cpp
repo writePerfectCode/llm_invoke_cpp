@@ -188,9 +188,6 @@ int main()
     });
     std::cout << func_registry::enum_name(recommendedPriority) << std::endl;
 
-    //std::cout << "\n--- Tool specs JSON ---" << std::endl;
-    //std::cout << adapter.getAllToolSpecsJson().dump(2) << std::endl;
-
     //std::cout << "\n--- Tool summaries JSON ---" << std::endl;
     //std::cout << adapter.getAllToolSummariesJson().dump(2) << std::endl;
 

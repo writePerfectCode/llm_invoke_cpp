@@ -147,9 +147,6 @@ TEST_CASE("json_invoke exports explicit execution semantics for wrapped stateles
     const auto sum_schema = adapter.getToolSchemaJson("sum");
     CHECK(sum_schema.at("function").at("x-execution-semantics").get<std::string>() == "read_only");
 
-    const auto append_spec = adapter.getToolSpecJson("append_log");
-    CHECK(append_spec.at("x-execution-semantics").get<std::string>() == "mutating");
-
     const auto summaries = adapter.getAllToolSummariesJson();
     REQUIRE(summaries.size() == 2);
     CHECK(summaries[0].contains("x-execution-semantics"));
@@ -240,6 +237,5 @@ TEST_CASE("json_invoke tool metadata matches JSON snapshots")
 {
     const auto adapter = makeSnapshotAdapter();
 
-    test_support::checkSnapshot("tool_specs_snapshot.json", adapter.getAllToolSpecsJson().dump(2));
     test_support::checkSnapshot("tool_schemas_snapshot.json", adapter.getAllToolSchemasJson().dump(2));
 }

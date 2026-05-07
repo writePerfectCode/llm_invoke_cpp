@@ -195,40 +195,6 @@ public:
         return summary;
     }
 
-    json_invoke::json applyToolSpecOverlay(const std::string& name, json_invoke::json spec) const
-    {
-        const auto it = stateful_tools_.find(name);
-        if (it == stateful_tools_.end())
-        {
-            return spec;
-        }
-
-        if (it->second.kind == StatefulToolKind::factory)
-        {
-            appendDescription(spec["description"], factorySpecSuffix());
-            spec["x-stateful-kind"] = "factory";
-            spec["x-object-type"] = it->second.object_type_name;
-        }
-        else if (it->second.kind == StatefulToolKind::method)
-        {
-            appendDescription(spec["description"], methodSpecSuffix(it->second.factory_tool_name));
-            spec["x-stateful-kind"] = "method";
-            spec["x-object-type"] = it->second.object_type_name;
-            spec["x-handle-source-tool"] = it->second.factory_tool_name;
-        }
-        else
-        {
-            appendDescription(spec["description"], destroySpecSuffix());
-            spec["x-stateful-kind"] = "destroy";
-            spec["x-object-type"] = it->second.object_type_name;
-            spec["x-handle-source-tool"] = it->second.factory_tool_name;
-        }
-
-        spec["x-execution-semantics"] = executionSemanticsName(it->second.execution_semantics);
-
-        return spec;
-    }
-
     json_invoke::json applyToolSchemaOverlay(const std::string& name, json_invoke::json schema) const
     {
         const auto it = stateful_tools_.find(name);

@@ -96,6 +96,7 @@ TEST_CASE("json_stateful preserves object state across repeated tool calls")
     const auto add_response = harness.adapter.invokeJson(
         {{"name", "counter_add"}, {"args", {{"handle", handle}, {"delta", 3}}}});
     CHECK(add_response.at("ok").get<bool>());
+    CHECK(add_response.at("return_llm_type").get<std::string>() == "null");
     CHECK(add_response.at("value").is_null());
 
     const auto value_response = harness.adapter.invokeJson(
@@ -120,6 +121,8 @@ TEST_CASE("json_stateful preserves object state across repeated tool calls")
     CHECK(handle_schema.at("properties").contains("object_type"));
     CHECK(schema.at("function").at("parameters").at("required") == json_session_invoke::json::array({"handle", "delta"}));
     CHECK(schema.at("function").at("x-execution-semantics").get<std::string>() == "mutating");
+    CHECK(schema.at("function").at("x-return").at("llm_type").get<std::string>() == "null");
+    CHECK(schema.at("function").at("x-return").at("schema").at("type").get<std::string>() == "null");
 
     const auto value_schema = harness.adapter.getToolSchemaJson("counter_value");
     CHECK(value_schema.at("function").at("x-execution-semantics").get<std::string>() == "read_only");
@@ -165,10 +168,6 @@ TEST_CASE("json_session_invoke forwards explicit execution semantics for wrapped
     const auto sum_schema = adapter.getToolSchemaJson("sum");
     CHECK(sum_schema.at("function").at("x-execution-semantics").get<std::string>() == "read_only");
     CHECK_FALSE(sum_schema.at("function").contains("x-stateful-kind"));
-
-    const auto append_spec = adapter.getToolSpecJson("append_log");
-    CHECK(append_spec.at("x-execution-semantics").get<std::string>() == "mutating");
-    CHECK_FALSE(append_spec.contains("x-stateful-kind"));
 
     const auto response = adapter.invokeJson(
         {{"name", "append_log"}, {"args", {{"suffix", "!"}}}});

@@ -558,22 +558,6 @@ public:
         return invoke_adapter_.invokeText(request_text, indent);
     }
 
-    json getToolSpecJson(const std::string& name) const
-    {
-        return runtime_.applyToolSpecOverlay(name, invoke_adapter_.getToolSpecJson(name));
-    }
-
-    json getAllToolSpecsJson() const
-    {
-        json tools = invoke_adapter_.getAllToolSpecsJson();
-        for (auto& tool : tools)
-        {
-            const std::string tool_name = tool.value("tool_name", "");
-            tool = runtime_.applyToolSpecOverlay(tool_name, std::move(tool));
-        }
-        return tools;
-    }
-
     json getAllToolSummariesJson() const
     {
         json tools = invoke_adapter_.getAllToolSummariesJson();

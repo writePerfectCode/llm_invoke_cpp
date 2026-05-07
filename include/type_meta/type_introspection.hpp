@@ -155,7 +155,11 @@ std::string llm_type_name()
     using D = remove_cvref_t<T>;
     using Unwrapped = remove_cvref_t<optional_value_type_t<D>>;
 
-    if constexpr (
+    if constexpr (std::is_void_v<Unwrapped>)
+    {
+        return "null";
+    }
+    else if constexpr (
         std::is_same_v<Unwrapped, std::string> ||
         std::is_same_v<Unwrapped, std::string_view> ||
         std::is_same_v<Unwrapped, const char*> ||
@@ -225,7 +229,11 @@ TypeSchema non_optional_type_schema()
 {
     using D = remove_cvref_t<T>;
 
-    if constexpr (
+    if constexpr (std::is_void_v<D>)
+    {
+        return makeTypeSchema("null");
+    }
+    else if constexpr (
         std::is_same_v<D, std::string> ||
         std::is_same_v<D, std::string_view> ||
         std::is_same_v<D, const char*> ||

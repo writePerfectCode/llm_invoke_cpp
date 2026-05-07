@@ -127,9 +127,7 @@ API notes
 - `json_invoke::TraceEvent` / `json_invoke::TraceSink`: opt-in tracing hooks for invoke and session lifecycle events; stable top-level fields include `event`, `timestamp`, `request_id`, `tool_name`, `duration_ms`, and event-specific `payload`.
 - `json_invoke::traceEventToJson(...)`: serialize one `TraceEvent` into the stable JSON shape used by the tracing demo and recorder helpers.
 - `json_invoke::VectorTraceRecorder`: lightweight collector from `include/tools/trace_recorder.hpp` that exposes a ready-to-use `TraceSink` and exports recorded events through `toJson()`.
-- `json_invoke::JsonInvokeAdapter::getToolSpecJson(...)` / `getAllToolSpecsJson()`: export JSON tool metadata directly from the adapter without separately managing a registry object.
 - `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
-- `json_invoke::getToolSpecJson(registry, name)` / `json_invoke::getAllToolSpecsJson(registry)`: export JSON tool metadata as free functions.
 - `json_invoke::getAllToolSummariesJson(registry)`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
 - `json_invoke::getToolSchemaJson(registry, name)` / `json_invoke::getAllToolSchemasJson(registry)`: emit JSON schemas from registered tool metadata without triggering invocation-time conversion checks.
 - `json_invoke::JsonInvokeAdapter::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.

@@ -28,11 +28,7 @@ using func_registry::BasicFuncRegistry;
 using func_registry::FuncCallResult;
 using func_registry::FunctionInfo;
 using func_registry::FunctionMetadata;
-using func_registry::ToolParameterSpec;
-using func_registry::ToolSpec;
-using func_registry::getAllToolSpecs;
 using func_registry::getFunctionInfo;
-using func_registry::getToolSpec;
 
 class JsonTypeRegistry;
 
@@ -768,22 +764,6 @@ public:
         }
     }
 
-    json getToolSpecJson(const std::string& name) const
-    {
-        return applyToolExecutionSemanticsToToolJson(name, json_invoke::getToolSpecJson(func_registry_, name));
-    }
-
-    json getAllToolSpecsJson() const
-    {
-        json tools = json_invoke::getAllToolSpecsJson(func_registry_);
-        for (auto& tool : tools)
-        {
-            const std::string tool_name = tool.value("tool_name", "");
-            tool = applyToolExecutionSemanticsToToolJson(tool_name, std::move(tool));
-        }
-        return tools;
-    }
-
     json getAllToolSummariesJson() const
     {
         json tools = json_invoke::getAllToolSummariesJson(func_registry_);
@@ -876,6 +856,14 @@ private:
         return makeTypeHooks<Traits>(std::make_index_sequence<Traits::arity>{});
     }
 
+    // autoRegisterTypes process:
+    // AutoRegistrationHooks collects registration hooks (if available) for all parameter types and return value types. These hooks are automatically generated based on function signatures when registering functions.
+    // For each parameter type of the function, if the corresponding JSON converter is not registered in registry_, invoke the corresponding registration hook to register this type.
+    // For the return value type of the function, if the corresponding JSON converter is not registered in registry_, invoke the corresponding registration hook to register this type.
+    // Hooks are essentially instantiations of function templates that can automatically register JSON converters based on types, namely void register_type_hook(void* registry);
+    // register_type_hook is a function template. After being instantiated for different types T, it calls the registerType<T>() method of JsonTypeRegistry to register the JSON converter.
+    // In turn, registerType implements conversion from JSON to C++ types via defaultFromJsonValue, which further uses from_json_value (for custom types) or json's get<T>() (for basic types/standard library types).
+    // It implements conversion from C++ types to JSON via defaultToJsonValue, which further uses to_json_value (for custom types) or the json constructor (json(value)).
     void autoRegisterTypes(const std::string& name, const AutoRegistrationHooks& hooks)
     {
         FunctionInfo info = getFunctionInfo(name);
