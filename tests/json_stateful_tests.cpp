@@ -370,7 +370,9 @@ TEST_CASE("json_stateful builder auto registers default destroy when omitted")
 TEST_CASE("json_stateful builder can customize auto destroy defaults")
 {
     json_session_invoke::JsonSessionInvokeAdapter adapter;
-    adapter.statefulDefaults().destroy_description = "Release one previously created counter handle.";
+    json_session_invoke::JsonSessionInvokeAdapter::StatefulDefaults defaults;
+    defaults.destroy_description = "Release one previously created counter handle.";
+    adapter.setStatefulDefaults(std::move(defaults));
 
     adapter
         .stateful<Counter>("counter")
@@ -386,7 +388,9 @@ TEST_CASE("json_stateful builder can customize auto destroy defaults")
 TEST_CASE("json_stateful builder can disable auto destroy registration")
 {
     json_session_invoke::JsonSessionInvokeAdapter adapter;
-    adapter.statefulDefaults().auto_register_destroy = false;
+    json_session_invoke::JsonSessionInvokeAdapter::StatefulDefaults defaults;
+    defaults.auto_register_destroy = false;
+    adapter.setStatefulDefaults(std::move(defaults));
 
     adapter
         .stateful<Counter>("counter")
@@ -395,7 +399,10 @@ TEST_CASE("json_stateful builder can disable auto destroy registration")
             func_registry::FunctionMetadata{{"initial"}, "Create an in-memory counter."})
         .method("counter_value", &Counter::current, "Read the current counter value.");
 
-    CHECK_FALSE(adapter.isFunctionRegistered("destroy_counter"));
+    const auto summaries = adapter.getAllToolSummariesJson();
+    CHECK(std::none_of(summaries.begin(), summaries.end(), [](const json_invoke::json& tool) {
+        return tool.value("name", "") == "destroy_counter";
+    }));
 }
 
 TEST_CASE("json_stateful builder does not auto register default destroy after custom destroy")
@@ -410,8 +417,13 @@ TEST_CASE("json_stateful builder does not auto register default destroy after cu
         .method("counter_value", &Counter::current, "Read the current counter value.")
         .destroy("release_counter");
 
-    CHECK(adapter.isFunctionRegistered("release_counter"));
-    CHECK_FALSE(adapter.isFunctionRegistered("destroy_counter"));
+    const auto summaries = adapter.getAllToolSummariesJson();
+    CHECK(std::any_of(summaries.begin(), summaries.end(), [](const json_invoke::json& tool) {
+        return tool.value("name", "") == "release_counter";
+    }));
+    CHECK(std::none_of(summaries.begin(), summaries.end(), [](const json_invoke::json& tool) {
+        return tool.value("name", "") == "destroy_counter";
+    }));
 
     const auto create_response = adapter.invokeJson(
         {{"name", "create_counter"}, {"args", {{"initial", 9}}}});

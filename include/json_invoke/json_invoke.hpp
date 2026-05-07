@@ -593,21 +593,6 @@ public:
         trace_dispatcher_->setSink(std::move(trace_sink));
     }
 
-    const TraceSink& traceSink() const noexcept
-    {
-        return trace_dispatcher_->sink();
-    }
-
-    TraceDispatcher& traceDispatcher() noexcept
-    {
-        return *trace_dispatcher_;
-    }
-
-    const TraceDispatcher& traceDispatcher() const noexcept
-    {
-        return *trace_dispatcher_;
-    }
-
     std::shared_ptr<TraceDispatcher> sharedTraceDispatcher() const noexcept
     {
         return trace_dispatcher_;
@@ -792,6 +777,16 @@ public:
     }
 
 private:
+    TraceDispatcher& traceDispatcher() noexcept
+    {
+        return *trace_dispatcher_;
+    }
+
+    const TraceDispatcher& traceDispatcher() const noexcept
+    {
+        return *trace_dispatcher_;
+    }
+
     template<typename PayloadFactory>
     void emitTraceEventIfEnabled(TraceEventKind kind, const std::string& name, PayloadFactory&& payload_factory) const
     {

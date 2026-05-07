@@ -139,10 +139,9 @@ API notes
 - `json_session_invoke::JsonSessionInvokeAdapter::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
-- If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `statefulDefaults().auto_register_destroy` is disabled.
-- `json_session_invoke::JsonSessionInvokeAdapter::statefulDefaults()`: adapter-level defaults for auto-generated stateful helpers, including `auto_register_destroy` and the default destroy description text.
+- If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `setStatefulDefaults(...)` disables `auto_register_destroy`.
+- `json_session_invoke::JsonSessionInvokeAdapter::setStatefulDefaults(...)`: adapter-level defaults for auto-generated stateful helpers, including `auto_register_destroy` and the default destroy description text.
 - `json_session_invoke::JsonSessionInvokeAdapter::registerDestroy<T>()`: when called without a name, defaults to `destroy_<object_type>` if the session object type was explicitly named during factory registration, otherwise falls back to `destroy_object`.
-- `json_session_invoke::JsonSessionInvokeAdapter::defaultFactoryToolName(...)` / `defaultDestroyToolName(...)`: reusable helpers for keeping explicit create/destroy tool names aligned with the session naming policy.
 - `json_invoke::json_traits<T>`: add custom JSON bindings for domain types.
 - `func_registry::schema_traits<T>`: optionally describe nested object fields so exported tool schemas can include custom object properties and container item shapes.
 - See `SCHEMA_TRAITS.md` for dedicated authoring guidance and LLM-oriented generation rules for `schema_traits<T>`.

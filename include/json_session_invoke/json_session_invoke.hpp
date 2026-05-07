@@ -197,7 +197,7 @@ public:
     private:
         void ensureDefaultDestroyRegistered() noexcept
         {
-            if (!active_ || !created_ || destroy_registered_ || !adapter_.statefulDefaults().auto_register_destroy)
+            if (!active_ || !created_ || destroy_registered_ || !adapter_.stateful_defaults_.auto_register_destroy)
             {
                 return;
             }
@@ -251,16 +251,6 @@ public:
         bool active_{true};
     };
 
-    static std::string defaultFactoryToolName(std::string_view object_type_name)
-    {
-        return makeDefaultSessionFactoryToolName(object_type_name);
-    }
-
-    static std::string defaultDestroyToolName(std::string_view object_type_name)
-    {
-        return makeDefaultSessionDestroyToolName(object_type_name);
-    }
-
     template<typename T>
     StatefulRegistrationBuilder<T> stateful(std::string object_type_name, Options options = {})
     {
@@ -278,16 +268,6 @@ public:
         runtime_.setTraceDispatcher(invoke_adapter_.sharedTraceDispatcher());
     }
 
-    StatefulDefaults& statefulDefaults() noexcept
-    {
-        return stateful_defaults_;
-    }
-
-    const StatefulDefaults& statefulDefaults() const noexcept
-    {
-        return stateful_defaults_;
-    }
-
     void setStatefulDefaults(StatefulDefaults defaults)
     {
         stateful_defaults_ = std::move(defaults);
@@ -296,24 +276,6 @@ public:
     void setTraceSink(json_invoke::TraceSink trace_sink)
     {
         invoke_adapter_.setTraceSink(std::move(trace_sink));
-    }
-
-    const json_invoke::TraceSink& traceSink() const noexcept
-    {
-        return invoke_adapter_.traceSink();
-    }
-
-    bool isFunctionRegistered(const std::string& name) const noexcept
-    {
-        try
-        {
-            static_cast<void>(invoke_adapter_.functionRegistry().getFunction(name));
-            return true;
-        }
-        catch (...)
-        {
-            return false;
-        }
     }
 
     template<typename T>
@@ -404,6 +366,78 @@ public:
         }
 
         invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn), std::move(description));
+    }
+
+    json invokeJson(const json& request) const
+    {
+        return invoke_adapter_.invokeJson(request);
+    }
+
+    JsonInvokeResult invoke(const json& request) const
+    {
+        return invoke_adapter_.invoke(request);
+    }
+
+    template<typename T>
+    T invoke(const json& request) const
+    {
+        return invoke_adapter_.template invoke<T>(request);
+    }
+
+    std::string invokeText(std::string_view request_text, int indent = 2) const
+    {
+        return invoke_adapter_.invokeText(request_text, indent);
+    }
+
+    json getAllToolSummariesJson() const
+    {
+        json tools = invoke_adapter_.getAllToolSummariesJson();
+        for (auto& tool : tools)
+        {
+            const std::string tool_name = tool.value("name", "");
+            tool = runtime_.applyToolSummaryOverlay(tool_name, std::move(tool));
+        }
+        return tools;
+    }
+
+    json getToolSchemaJson(const std::string& name) const
+    {
+        return runtime_.applyToolSchemaOverlay(name, invoke_adapter_.getToolSchemaJson(name));
+    }
+
+    json getAllToolSchemasJson() const
+    {
+        json tools = invoke_adapter_.getAllToolSchemasJson();
+        for (auto& tool : tools)
+        {
+            const std::string tool_name = tool.at("function").value("name", "");
+            tool = runtime_.applyToolSchemaOverlay(tool_name, std::move(tool));
+        }
+        return tools;
+    }
+
+private:
+    bool isFunctionRegistered(const std::string& name) const noexcept
+    {
+        try
+        {
+            static_cast<void>(invoke_adapter_.functionRegistry().getFunction(name));
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    static std::string defaultFactoryToolName(std::string_view object_type_name)
+    {
+        return makeDefaultSessionFactoryToolName(object_type_name);
+    }
+
+    static std::string defaultDestroyToolName(std::string_view object_type_name)
+    {
+        return makeDefaultSessionDestroyToolName(object_type_name);
     }
 
     template<typename T, typename Fn>
@@ -497,55 +531,6 @@ public:
         registerDestroy<T>(name, makeDestroyMetadata(std::move(description)));
     }
 
-    json invokeJson(const json& request) const
-    {
-        return invoke_adapter_.invokeJson(request);
-    }
-
-    JsonInvokeResult invoke(const json& request) const
-    {
-        return invoke_adapter_.invoke(request);
-    }
-
-    template<typename T>
-    T invoke(const json& request) const
-    {
-        return invoke_adapter_.template invoke<T>(request);
-    }
-
-    std::string invokeText(std::string_view request_text, int indent = 2) const
-    {
-        return invoke_adapter_.invokeText(request_text, indent);
-    }
-
-    json getAllToolSummariesJson() const
-    {
-        json tools = invoke_adapter_.getAllToolSummariesJson();
-        for (auto& tool : tools)
-        {
-            const std::string tool_name = tool.value("name", "");
-            tool = runtime_.applyToolSummaryOverlay(tool_name, std::move(tool));
-        }
-        return tools;
-    }
-
-    json getToolSchemaJson(const std::string& name) const
-    {
-        return runtime_.applyToolSchemaOverlay(name, invoke_adapter_.getToolSchemaJson(name));
-    }
-
-    json getAllToolSchemasJson() const
-    {
-        json tools = invoke_adapter_.getAllToolSchemasJson();
-        for (auto& tool : tools)
-        {
-            const std::string tool_name = tool.at("function").value("name", "");
-            tool = runtime_.applyToolSchemaOverlay(tool_name, std::move(tool));
-        }
-        return tools;
-    }
-
-private:
     template<typename T, typename Fn>
     void registerStatefulMethod(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
