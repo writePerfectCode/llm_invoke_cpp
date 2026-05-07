@@ -566,26 +566,26 @@ public:
         return func_registry_;
     }
 
-    JsonTypeRegistry& registry() noexcept
+    JsonTypeRegistry& jsonTypeRegistry() noexcept
     {
-        return registry_;
+        return json_type_registry_;
     }
 
-    const JsonTypeRegistry& registry() const noexcept
+    const JsonTypeRegistry& jsonTypeRegistry() const noexcept
     {
-        return registry_;
+        return json_type_registry_;
     }
 
     template<typename T>
     void registerType()
     {
-        registry_.template registerType<T>();
+        json_type_registry_.template registerType<T>();
     }
 
     template<typename T, typename FromJson, typename ToJson>
     void registerType(FromJson&& from_json, ToJson&& to_json)
     {
-        registry_.template registerType<T>(std::forward<FromJson>(from_json), std::forward<ToJson>(to_json));
+        json_type_registry_.template registerType<T>(std::forward<FromJson>(from_json), std::forward<ToJson>(to_json));
     }
 
     void setTraceSink(TraceSink trace_sink)
@@ -707,7 +707,7 @@ public:
                 {"name", name},
                 {"return_cpp_type_name", info.ret_type_name},
                 {"return_llm_type", func_registry::getTypeIntrospectionOrFallback(info.ret_type).llm_type},
-                {"value", registry_.toJson(result.any(), result.declaredReturnType())},
+                {"value", json_type_registry_.toJson(result.any(), result.declaredReturnType())},
             };
 
             emitTraceEventIfEnabled(TraceEventKind::invoke_finished, name, [&response]() {
@@ -858,8 +858,8 @@ private:
 
     // autoRegisterTypes process:
     // AutoRegistrationHooks collects registration hooks (if available) for all parameter types and return value types. These hooks are automatically generated based on function signatures when registering functions.
-    // For each parameter type of the function, if the corresponding JSON converter is not registered in registry_, invoke the corresponding registration hook to register this type.
-    // For the return value type of the function, if the corresponding JSON converter is not registered in registry_, invoke the corresponding registration hook to register this type.
+    // For each parameter type of the function, if the corresponding JSON converter is not registered in json_type_registry_, invoke the corresponding registration hook to register this type.
+    // For the return value type of the function, if the corresponding JSON converter is not registered in json_type_registry_, invoke the corresponding registration hook to register this type.
     // Hooks are essentially instantiations of function templates that can automatically register JSON converters based on types, namely void register_type_hook(void* registry);
     // register_type_hook is a function template. After being instantiated for different types T, it calls the registerType<T>() method of JsonTypeRegistry to register the JSON converter.
     // In turn, registerType implements conversion from JSON to C++ types via defaultFromJsonValue, which further uses from_json_value (for custom types) or json's get<T>() (for basic types/standard library types).
@@ -870,20 +870,20 @@ private:
 
         for (std::size_t index = 0; index < info.arg_types.size(); ++index)
         {
-            if (registry_.canRead(info.arg_types[index]))
+            if (json_type_registry_.canRead(info.arg_types[index]))
             {
                 continue;
             }
 
             if (index < hooks.arg_type_hooks.size() && hooks.arg_type_hooks[index] != nullptr)
             {
-                hooks.arg_type_hooks[index](&registry_);
+                hooks.arg_type_hooks[index](&json_type_registry_);
             }
         }
 
-        if (!registry_.canWrite(info.ret_type) && hooks.ret_type_hook != nullptr)
+        if (!json_type_registry_.canWrite(info.ret_type) && hooks.ret_type_hook != nullptr)
         {
-            hooks.ret_type_hook(&registry_);
+            hooks.ret_type_hook(&json_type_registry_);
         }
     }
 
@@ -1035,7 +1035,7 @@ private:
     {
         for (std::size_t index = 0; index < info.arg_types.size(); ++index)
         {
-            if (!registry_.canRead(info.arg_types[index]))
+            if (!json_type_registry_.canRead(info.arg_types[index]))
             {
                 throw JsonInvokeError(
                     "unsupported_type",
@@ -1044,7 +1044,7 @@ private:
             }
         }
 
-        if (!registry_.canWrite(info.ret_type))
+        if (!json_type_registry_.canWrite(info.ret_type))
         {
             throw JsonInvokeError(
                 "unsupported_type",
@@ -1166,7 +1166,7 @@ private:
     {
         try
         {
-            return registry_.fromJson(value, expected_type);
+            return json_type_registry_.fromJson(value, expected_type);
         }
         catch (const JsonInvokeError& e)
         {
@@ -1214,7 +1214,7 @@ private:
 
     MapType owned_func_registry_{};
     MapType& func_registry_;
-    JsonTypeRegistry registry_;
+    JsonTypeRegistry json_type_registry_;
     std::unordered_map<std::string, ToolExecutionSemantics> tool_execution_semantics_;
     std::shared_ptr<TraceDispatcher> trace_dispatcher_{std::make_shared<TraceDispatcher>()};
 };

@@ -278,11 +278,6 @@ public:
         runtime_.setTraceDispatcher(invoke_adapter_.sharedTraceDispatcher());
     }
 
-    UnderlyingAdapter& jsonInvokeAdapter() noexcept
-    {
-        return invoke_adapter_;
-    }
-
     StatefulDefaults& statefulDefaults() noexcept
     {
         return stateful_defaults_;
@@ -308,46 +303,11 @@ public:
         return invoke_adapter_.traceSink();
     }
 
-    const UnderlyingAdapter& jsonInvokeAdapter() const noexcept
-    {
-        return invoke_adapter_;
-    }
-
-    UnderlyingAdapter& invokeAdapter() noexcept
-    {
-        return jsonInvokeAdapter();
-    }
-
-    const UnderlyingAdapter& invokeAdapter() const noexcept
-    {
-        return jsonInvokeAdapter();
-    }
-
-    MapType& functionRegistry() noexcept
-    {
-        return invoke_adapter_.functionRegistry();
-    }
-
-    const MapType& functionRegistry() const noexcept
-    {
-        return invoke_adapter_.functionRegistry();
-    }
-
-    auto& registry() noexcept
-    {
-        return invoke_adapter_.registry();
-    }
-
-    const auto& registry() const noexcept
-    {
-        return invoke_adapter_.registry();
-    }
-
     bool isFunctionRegistered(const std::string& name) const noexcept
     {
         try
         {
-            static_cast<void>(functionRegistry().getFunction(name));
+            static_cast<void>(invoke_adapter_.functionRegistry().getFunction(name));
             return true;
         }
         catch (...)
@@ -601,7 +561,7 @@ private:
                 invoke_adapter_.registerFunction(function_name, std::forward<decltype(callable)>(callable), std::move(function_metadata));
             },
             [this](const json& value, std::type_index expected_type) {
-                return invoke_adapter_.registry().fromJson(value, expected_type);
+                return invoke_adapter_.jsonTypeRegistry().fromJson(value, expected_type);
             });
     }
 
@@ -620,7 +580,7 @@ private:
 
         if constexpr (json_invoke::detail::can_auto_register_type_v<ObjectType>)
         {
-            if (!invoke_adapter_.registry().canRead(typeid(ObjectType)))
+            if (!invoke_adapter_.jsonTypeRegistry().canRead(typeid(ObjectType)))
             {
                 invoke_adapter_.template registerType<ObjectType>();
             }

@@ -134,7 +134,6 @@ API notes
 - `json_invoke::JsonInvokeAdapter::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
 - `json_session_invoke::JsonSessionInvokeAdapter`: higher-level session adapter that composes `json_invoke` and is the recommended entry point for stateful object lifecycles.
 - `json_session_invoke::SessionObjectHandle` / `json_session_invoke::SessionObjectOptions`: clearer public aliases for the session-layer handle and options types; `ObjectHandle` / `ObjectOptions` remain supported for compatibility.
-- `json_session_invoke::JsonSessionInvokeAdapter::jsonInvokeAdapter()`: explicit access to the composed lower-level `json_invoke` adapter when you need raw stateless capabilities.
 - `json_session_invoke::JsonSessionInvokeAdapter::registerFunction(...)`: also supports plain stateless function registration directly, so one session adapter can host both stateless tools and stateful object lifecycles.
 - `json_session_invoke::JsonSessionInvokeAdapter::registerFunction(...)` intentionally rejects member function pointers; stateful member methods must be registered through `stateful<T>(...).method(...)` so the session boundary stays explicit.
 - `json_session_invoke::JsonSessionInvokeAdapter::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
