@@ -26,7 +26,7 @@ Project layout
 - `include/json_invoke/json_trace.hpp`: tracing event model, request context helpers, and JSON serialization helpers.
 - `include/json_invoke/json_traits.hpp`: trait hook for custom JSON bindings.
 - `include/json_session_invoke/json_session_invoke.hpp`: session-oriented adapter that composes `json_invoke` and exposes stateful factory APIs as the high-level entry point.
-- `include/json_session_invoke/json_session_support.hpp`: session-only object handle, object options, and in-memory object store support.
+- `include/json_session_invoke/session_objects.hpp`: session object handles, object options, JSON/schema bindings, and in-memory object store support.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.

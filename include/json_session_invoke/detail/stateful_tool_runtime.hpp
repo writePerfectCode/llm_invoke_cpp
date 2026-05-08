@@ -14,7 +14,7 @@
 #include <json_invoke/json_tool_execution_semantics.hpp>
 #include <json_invoke/json_trace.hpp>
 #include <func_registry/func_registry.hpp>
-#include <json_session_invoke/json_session_support.hpp>
+#include <json_session_invoke/session_objects.hpp>
 
 namespace json_session_invoke::detail {
 
@@ -43,7 +43,7 @@ inline bool looksLikeObjectHandle(const json_invoke::json& value)
 template<bool EnableThreadSafety>
 class BasicStatefulRuntime {
 public:
-    using Store = json_session_invoke::detail::BasicStatefulObjectStore<EnableThreadSafety>;
+    using StatefulObjectStore = json_session_invoke::detail::BasicStatefulObjectStore<EnableThreadSafety>;
 
     void setTraceDispatcher(std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher)
     {
@@ -53,8 +53,8 @@ public:
     template<typename T>
     std::string defaultDestroyToolName() const
     {
-        const auto object_type_name = object_store_.template configuredObjectTypeName<T>();
-        return makeDefaultSessionDestroyToolName(object_type_name.value_or("object"));
+        const auto configured_object_type_name = object_store_.template configuredObjectTypeName<T>();
+        return makeDefaultSessionDestroyToolName(configured_object_type_name.value_or("object"));
     }
 
     enum class StatefulToolKind {
@@ -74,10 +74,10 @@ public:
 
     template<typename T, typename Fn, typename RegisterFunctionFn>
     void registerFactory(
-        const std::string& name,
+        const std::string& factory_tool_name,
         Fn&& fn,
         func_registry::FunctionMetadata metadata,
-        std::string object_type_name,
+        std::string requested_object_type_name,
         json_session_invoke::ObjectOptions options,
         RegisterFunctionFn&& register_function)
     {
@@ -90,14 +90,14 @@ public:
                 std::is_constructible_v<T, ReturnType>,
             "object factory must return T or std::shared_ptr<T>");
 
-        if (!object_type_name.empty())
+        if (!requested_object_type_name.empty())
         {
-            object_store_.template setObjectTypeName<T>(object_type_name);
+            object_store_.template setObjectTypeName<T>(requested_object_type_name);
         }
 
         const std::string resolved_object_type_name = object_store_.template objectTypeName<T>();
         std::forward<RegisterFunctionFn>(register_function)(
-            name,
+            factory_tool_name,
             makeFactoryWrapper<T>(
                 std::forward<Fn>(fn),
                 resolved_object_type_name,
@@ -105,12 +105,12 @@ public:
                 std::make_index_sequence<Traits::arity>{}),
             std::move(metadata));
 
-        recordStatefulFactory<T>(name, resolved_object_type_name);
+        recordStatefulFactory<T>(factory_tool_name, resolved_object_type_name);
     }
 
     template<typename T, typename RegisterFunctionFn>
     void registerDestroy(
-        const std::string& name,
+        const std::string& destroy_tool_name,
         func_registry::FunctionMetadata metadata,
         RegisterFunctionFn&& register_function)
     {
@@ -120,18 +120,19 @@ public:
         }
 
         std::forward<RegisterFunctionFn>(register_function)(
-            name,
+            destroy_tool_name,
             [this](json_session_invoke::ObjectHandle handle) {
                 return object_store_.destroy(handle);
             },
             std::move(metadata));
 
-        recordStatefulDestroy<T>(name, object_store_.template objectTypeName<T>());
+        const std::string registered_object_type_name = object_store_.template objectTypeName<T>();
+        recordStatefulDestroy<T>(destroy_tool_name, registered_object_type_name);
     }
 
     template<typename Fn, typename RegisterFunctionFn, typename FromJsonFn>
     void registerMethod(
-        const std::string& name,
+        const std::string& method_tool_name,
         Fn&& fn,
         func_registry::FunctionMetadata metadata,
         RegisterFunctionFn&& register_function,
@@ -141,26 +142,26 @@ public:
         using ObjectArg = typename Traits::template arg<0>;
         using ObjectType = std::remove_cv_t<std::remove_reference_t<ObjectArg>>;
 
-        const std::string object_type_name = object_store_.template objectTypeName<ObjectType>();
+        const std::string registered_object_type_name = object_store_.template objectTypeName<ObjectType>();
         const std::string handle_parameter_name = metadata.param_names.empty()
             ? std::string(default_handle_parameter_name)
             : metadata.param_names.front();
 
         std::forward<RegisterFunctionFn>(register_function)(
-            name,
+            method_tool_name,
             makeMethodWrapper<Fn>(
                 std::forward<Fn>(fn),
                 std::forward<FromJsonFn>(from_json),
                 std::make_index_sequence<Traits::arity - 1>{}),
             std::move(metadata));
 
-        method_tools_by_object_type_[typeid(ObjectType)].push_back(name);
+        method_tools_by_object_type_[typeid(ObjectType)].push_back(method_tool_name);
 
         StatefulToolMetadata tool_metadata;
         tool_metadata.kind = StatefulToolKind::method;
         tool_metadata.execution_semantics = methodExecutionSemantics<ObjectArg>();
         tool_metadata.object_cpp_type = typeid(ObjectType);
-        tool_metadata.object_type_name = object_type_name;
+        tool_metadata.object_type_name = registered_object_type_name;
         tool_metadata.handle_parameter_name = handle_parameter_name;
 
         auto factory_it = factory_tool_by_object_type_.find(typeid(ObjectType));
@@ -169,13 +170,13 @@ public:
             tool_metadata.factory_tool_name = factory_it->second;
         }
 
-        stateful_tools_[name] = std::move(tool_metadata);
+        stateful_tools_[method_tool_name] = std::move(tool_metadata);
         refreshRelatedStatefulTools(typeid(ObjectType));
     }
 
-    json_invoke::json applyToolSummaryOverlay(const std::string& name, json_invoke::json summary) const
+    json_invoke::json applyToolSummaryOverlay(const std::string& tool_name, json_invoke::json summary) const
     {
-        const auto it = stateful_tools_.find(name);
+        const auto it = stateful_tools_.find(tool_name);
         if (it == stateful_tools_.end())
         {
             return summary;
@@ -195,9 +196,9 @@ public:
         return summary;
     }
 
-    json_invoke::json applyToolSchemaOverlay(const std::string& name, json_invoke::json schema) const
+    json_invoke::json applyToolSchemaOverlay(const std::string& tool_name, json_invoke::json schema) const
     {
-        const auto it = stateful_tools_.find(name);
+        const auto it = stateful_tools_.find(tool_name);
         if (it == stateful_tools_.end())
         {
             return schema;
@@ -291,10 +292,10 @@ private:
                 auto access = object_store_.template checkoutObject<ObjectType>(
                     object_or_handle.get<json_session_invoke::ObjectHandle>(),
                     object_store_.template objectTypeName<ObjectType>());
-                std::unique_ptr<std::unique_lock<typename Store::ObjectMutexType>> active_lock;
+                std::unique_ptr<std::unique_lock<typename StatefulObjectStore::ObjectMutexType>> active_lock;
                 if (access.invocation_mutex)
                 {
-                    active_lock = std::make_unique<std::unique_lock<typename Store::ObjectMutexType>>(*access.invocation_mutex);
+                    active_lock = std::make_unique<std::unique_lock<typename StatefulObjectStore::ObjectMutexType>>(*access.invocation_mutex);
                 }
 
                 return std::invoke(member, *access.object, std::forward<typename Traits::template arg<I + 1>>(args)...);
@@ -313,18 +314,22 @@ private:
     }
 
     template<typename T, typename Fn, std::size_t... I>
-    auto makeFactoryWrapper(Fn&& fn, std::string object_type_name, json_session_invoke::ObjectOptions options, std::index_sequence<I...>)
+    auto makeFactoryWrapper(
+        Fn&& fn,
+        std::string resolved_object_type_name,
+        json_session_invoke::ObjectOptions options,
+        std::index_sequence<I...>)
     {
         using Traits = callable_traits_t<Fn>;
 
         return [this,
                 factory = std::decay_t<Fn>(std::forward<Fn>(fn)),
-                object_type_name = std::move(object_type_name),
+                resolved_object_type_name = std::move(resolved_object_type_name),
                 options = std::move(options)]
                (typename Traits::template arg<I>... args) -> json_session_invoke::ObjectHandle {
             return storeFactoryResult<T>(
                 std::invoke(factory, std::forward<typename Traits::template arg<I>>(args)...),
-                object_type_name,
+                resolved_object_type_name,
                 options);
         };
     }
@@ -332,71 +337,76 @@ private:
     template<typename T, typename FactoryResult>
     json_session_invoke::ObjectHandle storeFactoryResult(
         FactoryResult&& result,
-        std::string object_type_name,
+        std::string resolved_object_type_name,
         json_session_invoke::ObjectOptions options)
     {
         if constexpr (std::is_convertible_v<json_session_invoke::detail::stateful_remove_cvref_t<FactoryResult>, std::shared_ptr<T>>)
         {
             return object_store_.template emplace<T>(
                 std::shared_ptr<T>(std::forward<FactoryResult>(result)),
-                std::move(object_type_name),
+                std::move(resolved_object_type_name),
                 std::move(options));
         }
 
-        return object_store_.template emplace<T>(std::forward<FactoryResult>(result), std::move(object_type_name), std::move(options));
+        return object_store_.template emplace<T>(
+            std::forward<FactoryResult>(result),
+            std::move(resolved_object_type_name),
+            std::move(options));
     }
 
     template<typename T>
-    void recordStatefulFactory(const std::string& name, const std::string& object_type_name)
+    void recordStatefulFactory(const std::string& factory_tool_name, const std::string& registered_object_type_name)
     {
-        factory_tool_by_object_type_[typeid(T)] = name;
+        factory_tool_by_object_type_[typeid(T)] = factory_tool_name;
 
         StatefulToolMetadata metadata;
         metadata.kind = StatefulToolKind::factory;
         metadata.execution_semantics = json_invoke::ToolExecutionSemantics::mutating;
         metadata.object_cpp_type = typeid(T);
-        metadata.object_type_name = object_type_name;
-        metadata.factory_tool_name = name;
-        stateful_tools_[name] = std::move(metadata);
+        metadata.object_type_name = registered_object_type_name;
+        metadata.factory_tool_name = factory_tool_name;
+        stateful_tools_[factory_tool_name] = std::move(metadata);
         refreshRelatedStatefulTools(typeid(T));
     }
 
     template<typename T>
-    void recordStatefulDestroy(const std::string& name, const std::string& object_type_name)
+    void recordStatefulDestroy(const std::string& destroy_tool_name, const std::string& registered_object_type_name)
     {
-        destroy_tool_by_object_type_[typeid(T)] = name;
+        destroy_tool_by_object_type_[typeid(T)] = destroy_tool_name;
 
         StatefulToolMetadata metadata;
         metadata.kind = StatefulToolKind::destroy;
         metadata.execution_semantics = json_invoke::ToolExecutionSemantics::mutating;
         metadata.object_cpp_type = typeid(T);
-        metadata.object_type_name = object_type_name;
+        metadata.object_type_name = registered_object_type_name;
         metadata.factory_tool_name = factoryToolName(typeid(T));
         metadata.handle_parameter_name = std::string(default_handle_parameter_name);
-        stateful_tools_[name] = std::move(metadata);
+        stateful_tools_[destroy_tool_name] = std::move(metadata);
         refreshRelatedStatefulTools(typeid(T));
     }
 
     void refreshRelatedStatefulTools(std::type_index object_cpp_type)
     {
-        const std::string factory_name = factoryToolName(object_cpp_type);
-        const auto methods_it = method_tools_by_object_type_.find(object_cpp_type);
+        const std::string factory_tool_name = factoryToolName(object_cpp_type);
+        const auto method_tool_names_it = method_tools_by_object_type_.find(object_cpp_type);
 
-        if (!factory_name.empty())
+        if (!factory_tool_name.empty())
         {
-            for (const auto& method_name : methods_it != method_tools_by_object_type_.end() ? methods_it->second : std::vector<std::string>{})
+            for (const auto& method_tool_name : method_tool_names_it != method_tools_by_object_type_.end()
+                     ? method_tool_names_it->second
+                     : std::vector<std::string>{})
             {
-                auto tool_it = stateful_tools_.find(method_name);
+                auto tool_it = stateful_tools_.find(method_tool_name);
                 if (tool_it != stateful_tools_.end())
                 {
-                    tool_it->second.factory_tool_name = factory_name;
+                    tool_it->second.factory_tool_name = factory_tool_name;
                 }
             }
 
             const auto destroy_it = destroy_tool_by_object_type_.find(object_cpp_type);
             if (destroy_it != destroy_tool_by_object_type_.end())
             {
-                stateful_tools_[destroy_it->second].factory_tool_name = factory_name;
+                stateful_tools_[destroy_it->second].factory_tool_name = factory_tool_name;
             }
         }
     }
@@ -475,20 +485,24 @@ private:
             }},
             {"required", json_invoke::json::array({"object_id"})},
         };
-        const std::string source_tool = metadata.factory_tool_name.empty()
+        const std::string source_tool_name = metadata.factory_tool_name.empty()
             ? "the matching create tool"
             : metadata.factory_tool_name;
-        schema["description"] = "Use the handle returned by " + source_tool + ".";
+        schema["description"] = "Use the handle returned by " + source_tool_name + ".";
         schema["x-cpp-type"] = "json_session_invoke::ObjectHandle";
         schema["x-llm-type"] = "object";
         schema["x-nullable"] = false;
         return schema;
     }
 
-    Store object_store_{};
+    StatefulObjectStore object_store_{};
+    // Per-tool stateful metadata used when overlaying summaries and JSON schemas.
     std::unordered_map<std::string, StatefulToolMetadata> stateful_tools_;
+    // Factory tool name keyed by object C++ type so related methods/destroy tools can point back to it.
     std::unordered_map<std::type_index, std::string> factory_tool_by_object_type_;
+    // Destroy tool name keyed by object C++ type so factory schemas can advertise the teardown tool.
     std::unordered_map<std::type_index, std::string> destroy_tool_by_object_type_;
+    // Method tool names keyed by object C++ type so factory schemas can advertise follow-up method tools.
     std::unordered_map<std::type_index, std::vector<std::string>> method_tools_by_object_type_;
 };
 

@@ -8,8 +8,8 @@
 #include <vector>
 
 #include <json_invoke/json_invoke.hpp>
-#include <json_session_invoke/detail/stateful_runtime.hpp>
-#include <json_session_invoke/json_session_support.hpp>
+#include <json_session_invoke/detail/stateful_tool_runtime.hpp>
+#include <json_session_invoke/session_objects.hpp>
 
 namespace json_session_invoke {
 
@@ -22,8 +22,6 @@ class BasicJsonSessionInvokeAdapter {
 public:
     using UnderlyingAdapter = json_invoke::BasicJsonInvokeAdapter<EnableThreadSafety>;
     using MapType = typename UnderlyingAdapter::MapType;
-    using Handle = ObjectHandle;
-    using Options = ObjectOptions;
 
     struct StatefulDefaults {
         bool auto_register_destroy{true};
@@ -33,9 +31,12 @@ public:
     template<typename T>
     class StatefulRegistrationBuilder {
     public:
-        StatefulRegistrationBuilder(BasicJsonSessionInvokeAdapter& adapter, std::string object_type_name, Options options)
+        StatefulRegistrationBuilder(
+            BasicJsonSessionInvokeAdapter& adapter,
+            std::string configured_object_type_name,
+            ObjectOptions options)
             : adapter_(adapter)
-            , object_type_name_(std::move(object_type_name))
+            , configured_object_type_name_(std::move(configured_object_type_name))
             , options_(std::move(options))
         {
         }
@@ -45,7 +46,7 @@ public:
 
         StatefulRegistrationBuilder(StatefulRegistrationBuilder&& other) noexcept
             : adapter_(other.adapter_)
-            , object_type_name_(std::move(other.object_type_name_))
+            , configured_object_type_name_(std::move(other.configured_object_type_name_))
             , options_(std::move(other.options_))
             , created_(other.created_)
             , destroy_registered_(other.destroy_registered_)
@@ -61,7 +62,7 @@ public:
                 return *this;
             }
 
-            object_type_name_ = std::move(other.object_type_name_);
+            configured_object_type_name_ = std::move(other.configured_object_type_name_);
             options_ = std::move(other.options_);
             created_ = other.created_;
             destroy_registered_ = other.destroy_registered_;
@@ -76,31 +77,38 @@ public:
         }
 
         template<typename Fn>
-        StatefulRegistrationBuilder& create(const std::string& name, Fn&& fn)
-        {
-            adapter_.template registerFactory<T>(name, std::forward<Fn>(fn), object_type_name_, options_);
-            created_ = true;
-            return *this;
-        }
-
-        template<typename Fn>
-        StatefulRegistrationBuilder& create(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
+        StatefulRegistrationBuilder& create(const std::string& factory_tool_name, Fn&& fn)
         {
             adapter_.template registerFactory<T>(
-                name,
+                factory_tool_name,
                 std::forward<Fn>(fn),
-                std::move(metadata),
-                object_type_name_,
+                configured_object_type_name_,
                 options_);
             created_ = true;
             return *this;
         }
 
         template<typename Fn>
-        StatefulRegistrationBuilder& create(const std::string& name, Fn&& fn, std::string description)
+        StatefulRegistrationBuilder& create(
+            const std::string& factory_tool_name,
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata)
         {
             adapter_.template registerFactory<T>(
-                name,
+                factory_tool_name,
+                std::forward<Fn>(fn),
+                std::move(metadata),
+                configured_object_type_name_,
+                options_);
+            created_ = true;
+            return *this;
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(const std::string& factory_tool_name, Fn&& fn, std::string description)
+        {
+            adapter_.template registerFactory<T>(
+                factory_tool_name,
                 std::forward<Fn>(fn),
                 std::move(description),
                 options_);
@@ -127,26 +135,35 @@ public:
         }
 
         template<typename Fn>
-        StatefulRegistrationBuilder& method(const std::string& name, Fn&& fn)
+        StatefulRegistrationBuilder& method(const std::string& method_tool_name, Fn&& fn)
         {
             validateMethodType<Fn>();
-            adapter_.template registerStatefulMethod<T>(name, std::forward<Fn>(fn), makeDefaultMemberMetadata<Fn>(std::string{}));
+            adapter_.template registerStatefulMethod<T>(
+                method_tool_name,
+                std::forward<Fn>(fn),
+                makeDefaultMemberMetadata<Fn>(std::string{}));
             return *this;
         }
 
         template<typename Fn>
-        StatefulRegistrationBuilder& method(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
+        StatefulRegistrationBuilder& method(
+            const std::string& method_tool_name,
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata)
         {
             validateMethodType<Fn>();
-            adapter_.template registerStatefulMethod<T>(name, std::forward<Fn>(fn), std::move(metadata));
+            adapter_.template registerStatefulMethod<T>(method_tool_name, std::forward<Fn>(fn), std::move(metadata));
             return *this;
         }
 
         template<typename Fn>
-        StatefulRegistrationBuilder& method(const std::string& name, Fn&& fn, std::string description)
+        StatefulRegistrationBuilder& method(const std::string& method_tool_name, Fn&& fn, std::string description)
         {
             validateMethodType<Fn>();
-            adapter_.template registerStatefulMethod<T>(name, std::forward<Fn>(fn), makeDefaultMemberMetadata<Fn>(std::move(description)));
+            adapter_.template registerStatefulMethod<T>(
+                method_tool_name,
+                std::forward<Fn>(fn),
+                makeDefaultMemberMetadata<Fn>(std::move(description)));
             return *this;
         }
 
@@ -157,28 +174,30 @@ public:
             return *this;
         }
 
-        StatefulRegistrationBuilder& destroy(const std::string& name)
+        StatefulRegistrationBuilder& destroy(const std::string& destroy_tool_name)
         {
-            adapter_.template registerDestroy<T>(name);
+            adapter_.template registerDestroy<T>(destroy_tool_name);
             destroy_registered_ = true;
             return *this;
         }
 
-        StatefulRegistrationBuilder& destroy(const std::string& name, func_registry::FunctionMetadata metadata)
+        StatefulRegistrationBuilder& destroy(
+            const std::string& destroy_tool_name,
+            func_registry::FunctionMetadata metadata)
         {
-            adapter_.template registerDestroy<T>(name, std::move(metadata));
+            adapter_.template registerDestroy<T>(destroy_tool_name, std::move(metadata));
             destroy_registered_ = true;
             return *this;
         }
 
-        StatefulRegistrationBuilder& destroy(const std::string& name, std::string description)
+        StatefulRegistrationBuilder& destroy(const std::string& destroy_tool_name, std::string description)
         {
-            adapter_.template registerDestroy<T>(name, std::move(description));
+            adapter_.template registerDestroy<T>(destroy_tool_name, std::move(description));
             destroy_registered_ = true;
             return *this;
         }
 
-        StatefulRegistrationBuilder& options(Options options)
+        StatefulRegistrationBuilder& options(ObjectOptions options)
         {
             options_ = std::move(options);
             return *this;
@@ -186,10 +205,10 @@ public:
 
         const std::string& objectTypeName() const noexcept
         {
-            return object_type_name_;
+            return configured_object_type_name_;
         }
 
-        const Options& objectOptions() const noexcept
+        const ObjectOptions& objectOptions() const noexcept
         {
             return options_;
         }
@@ -235,26 +254,26 @@ public:
 
         std::string defaultFactoryToolName() const
         {
-            return BasicJsonSessionInvokeAdapter::defaultFactoryToolName(object_type_name_);
+            return BasicJsonSessionInvokeAdapter::defaultFactoryToolName(configured_object_type_name_);
         }
 
         std::string defaultDestroyToolName() const
         {
-            return BasicJsonSessionInvokeAdapter::defaultDestroyToolName(object_type_name_);
+            return BasicJsonSessionInvokeAdapter::defaultDestroyToolName(configured_object_type_name_);
         }
 
         BasicJsonSessionInvokeAdapter& adapter_;
-        std::string object_type_name_;
-        Options options_;
+        std::string configured_object_type_name_;
+        ObjectOptions options_;
         bool created_{false};
         bool destroy_registered_{false};
         bool active_{true};
     };
 
     template<typename T>
-    StatefulRegistrationBuilder<T> stateful(std::string object_type_name, Options options = {})
+    StatefulRegistrationBuilder<T> stateful(std::string configured_object_type_name, ObjectOptions options = {})
     {
-        return StatefulRegistrationBuilder<T>(*this, std::move(object_type_name), std::move(options));
+        return StatefulRegistrationBuilder<T>(*this, std::move(configured_object_type_name), std::move(options));
     }
 
     BasicJsonSessionInvokeAdapter()
@@ -291,7 +310,7 @@ public:
     }
 
     template<typename Fn>
-    void registerFunction(const std::string& name, Fn&& fn)
+    void registerFunction(const std::string& tool_name, Fn&& fn)
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
@@ -299,39 +318,39 @@ public:
             return;
         }
 
-        invoke_adapter_.registerFunction(name, std::forward<Fn>(fn));
+        invoke_adapter_.registerFunction(tool_name, std::forward<Fn>(fn));
     }
 
     template<typename Fn>
-    void registerFunction(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
+    void registerFunction(const std::string& tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
-            static_cast<void>(name);
+            static_cast<void>(tool_name);
             static_cast<void>(metadata);
             throwMemberFunctionRegistrationError();
             return;
         }
 
-        invoke_adapter_.registerFunction(name, std::forward<Fn>(fn), std::move(metadata));
+        invoke_adapter_.registerFunction(tool_name, std::forward<Fn>(fn), std::move(metadata));
     }
 
     template<typename Fn>
-    void registerFunction(const std::string& name, Fn&& fn, std::string description)
+    void registerFunction(const std::string& tool_name, Fn&& fn, std::string description)
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
-            static_cast<void>(name);
+            static_cast<void>(tool_name);
             static_cast<void>(description);
             throwMemberFunctionRegistrationError();
             return;
         }
 
-        invoke_adapter_.registerFunction(name, std::forward<Fn>(fn), std::move(description));
+        invoke_adapter_.registerFunction(tool_name, std::forward<Fn>(fn), std::move(description));
     }
 
     template<typename R, typename... Args, typename Fn>
-    void registerFunctionAs(const std::string& name, Fn&& fn)
+    void registerFunctionAs(const std::string& tool_name, Fn&& fn)
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
@@ -339,33 +358,35 @@ public:
             return;
         }
 
-        invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn));
+        invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn));
     }
 
     template<typename R, typename... Args, typename Fn>
-    void registerFunctionAs(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
+    void registerFunctionAs(const std::string& tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
+            static_cast<void>(tool_name);
             static_cast<void>(metadata);
             throwMemberFunctionRegistrationError();
             return;
         }
 
-        invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn), std::move(metadata));
+        invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn), std::move(metadata));
     }
 
     template<typename R, typename... Args, typename Fn>
-    void registerFunctionAs(const std::string& name, Fn&& fn, std::string description)
+    void registerFunctionAs(const std::string& tool_name, Fn&& fn, std::string description)
     {
         if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
         {
+            static_cast<void>(tool_name);
             static_cast<void>(description);
             throwMemberFunctionRegistrationError();
             return;
         }
 
-        invoke_adapter_.template registerFunctionAs<R, Args...>(name, std::forward<Fn>(fn), std::move(description));
+        invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn), std::move(description));
     }
 
     json invokeJson(const json& request) const
@@ -400,9 +421,9 @@ public:
         return tools;
     }
 
-    json getToolSchemaJson(const std::string& name) const
+    json getToolSchemaJson(const std::string& tool_name) const
     {
-        return runtime_.applyToolSchemaOverlay(name, invoke_adapter_.getToolSchemaJson(name));
+        return runtime_.applyToolSchemaOverlay(tool_name, invoke_adapter_.getToolSchemaJson(tool_name));
     }
 
     json getAllToolSchemasJson() const
@@ -417,11 +438,11 @@ public:
     }
 
 private:
-    bool isFunctionRegistered(const std::string& name) const noexcept
+    bool isFunctionRegistered(const std::string& tool_name) const noexcept
     {
         try
         {
-            static_cast<void>(invoke_adapter_.functionRegistry().getFunction(name));
+            static_cast<void>(invoke_adapter_.functionRegistry().getFunction(tool_name));
             return true;
         }
         catch (...)
@@ -441,40 +462,58 @@ private:
     }
 
     template<typename T, typename Fn>
-    void registerFactory(const std::string& name, Fn&& fn)
+    void registerFactory(const std::string& factory_tool_name, Fn&& fn)
     {
-        registerFactory<T>(name, std::forward<Fn>(fn), func_registry::FunctionMetadata{});
+        registerFactory<T>(factory_tool_name, std::forward<Fn>(fn), func_registry::FunctionMetadata{});
     }
 
     template<typename T, typename Fn>
-    void registerFactory(const std::string& name, Fn&& fn, ObjectOptions options)
-    {
-        registerFactory<T>(name, std::forward<Fn>(fn), func_registry::FunctionMetadata{}, std::string{}, std::move(options));
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
-    {
-        registerFactory<T>(name, std::forward<Fn>(fn), std::move(metadata), std::string{}, Options{});
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata, ObjectOptions options)
-    {
-        registerFactory<T>(name, std::forward<Fn>(fn), std::move(metadata), std::string{}, std::move(options));
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& name, Fn&& fn, std::string description)
-    {
-        registerFactory<T>(name, std::forward<Fn>(fn), func_registry::FunctionMetadata{{}, std::move(description)}, std::string{}, Options{});
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& name, Fn&& fn, std::string description, ObjectOptions options)
+    void registerFactory(const std::string& factory_tool_name, Fn&& fn, ObjectOptions options)
     {
         registerFactory<T>(
-            name,
+            factory_tool_name,
+            std::forward<Fn>(fn),
+            func_registry::FunctionMetadata{},
+            std::string{},
+            std::move(options));
+    }
+
+    template<typename T, typename Fn>
+    void registerFactory(const std::string& factory_tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
+    {
+        registerFactory<T>(factory_tool_name, std::forward<Fn>(fn), std::move(metadata), std::string{}, ObjectOptions{});
+    }
+
+    template<typename T, typename Fn>
+    void registerFactory(
+        const std::string& factory_tool_name,
+        Fn&& fn,
+        func_registry::FunctionMetadata metadata,
+        ObjectOptions options)
+    {
+        registerFactory<T>(factory_tool_name, std::forward<Fn>(fn), std::move(metadata), std::string{}, std::move(options));
+    }
+
+    template<typename T, typename Fn>
+    void registerFactory(const std::string& factory_tool_name, Fn&& fn, std::string description)
+    {
+        registerFactory<T>(
+            factory_tool_name,
+            std::forward<Fn>(fn),
+            func_registry::FunctionMetadata{{}, std::move(description)},
+            std::string{},
+            ObjectOptions{});
+    }
+
+    template<typename T, typename Fn>
+    void registerFactory(
+        const std::string& factory_tool_name,
+        Fn&& fn,
+        std::string description,
+        ObjectOptions options)
+    {
+        registerFactory<T>(
+            factory_tool_name,
             std::forward<Fn>(fn),
             func_registry::FunctionMetadata{{}, std::move(description)},
             std::string{},
@@ -483,21 +522,24 @@ private:
 
     template<typename T, typename Fn>
     void registerFactory(
-        const std::string& name,
+        const std::string& factory_tool_name,
         Fn&& fn,
         func_registry::FunctionMetadata metadata,
-        std::string object_type_name,
+        std::string configured_object_type_name,
         ObjectOptions options = {})
     {
-        invoke_adapter_.template registerType<Handle>();
+        invoke_adapter_.template registerType<ObjectHandle>();
         runtime_.template registerFactory<T>(
-            name,
+            factory_tool_name,
             std::forward<Fn>(fn),
             std::move(metadata),
-            std::move(object_type_name),
+            std::move(configured_object_type_name),
             std::move(options),
-            [this](const std::string& function_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
-                invoke_adapter_.registerFunction(function_name, std::forward<decltype(callable)>(callable), std::move(function_metadata));
+            [this](const std::string& registered_tool_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
+                invoke_adapter_.registerFunction(
+                    registered_tool_name,
+                    std::forward<decltype(callable)>(callable),
+                    std::move(function_metadata));
             });
     }
 
@@ -508,45 +550,51 @@ private:
     }
 
     template<typename T>
-    void registerDestroy(const std::string& name)
+    void registerDestroy(const std::string& destroy_tool_name)
     {
-        registerDestroy<T>(name, makeDestroyMetadata(defaultDestroyDescription()));
+        registerDestroy<T>(destroy_tool_name, makeDestroyMetadata(defaultDestroyDescription()));
     }
 
     template<typename T>
-    void registerDestroy(const std::string& name, func_registry::FunctionMetadata metadata)
+    void registerDestroy(const std::string& destroy_tool_name, func_registry::FunctionMetadata metadata)
     {
-        invoke_adapter_.template registerType<Handle>();
+        invoke_adapter_.template registerType<ObjectHandle>();
         runtime_.template registerDestroy<T>(
-            name,
+            destroy_tool_name,
             std::move(metadata),
-            [this](const std::string& function_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
-                invoke_adapter_.registerFunction(function_name, std::forward<decltype(callable)>(callable), std::move(function_metadata));
+            [this](const std::string& registered_tool_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
+                invoke_adapter_.registerFunction(
+                    registered_tool_name,
+                    std::forward<decltype(callable)>(callable),
+                    std::move(function_metadata));
             });
     }
 
     template<typename T>
-    void registerDestroy(const std::string& name, std::string description)
+    void registerDestroy(const std::string& destroy_tool_name, std::string description)
     {
-        registerDestroy<T>(name, makeDestroyMetadata(std::move(description)));
+        registerDestroy<T>(destroy_tool_name, makeDestroyMetadata(std::move(description)));
     }
 
     template<typename T, typename Fn>
-    void registerStatefulMethod(const std::string& name, Fn&& fn, func_registry::FunctionMetadata metadata)
+    void registerStatefulMethod(const std::string& method_tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
         static_assert(std::is_member_function_pointer_v<std::decay_t<Fn>>,
             "registerStatefulMethod requires a member function pointer");
 
         ensureDirectObjectTypeRegistered<Fn>();
         runtime_.template registerMethod<Fn>(
-            name,
+            method_tool_name,
             std::forward<Fn>(fn),
             normalizeMemberMetadata<Fn>(std::move(metadata)),
-            [this](const std::string& function_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
-                invoke_adapter_.registerFunction(function_name, std::forward<decltype(callable)>(callable), std::move(function_metadata));
+            [this](const std::string& registered_tool_name, auto&& callable, func_registry::FunctionMetadata function_metadata) {
+                invoke_adapter_.registerFunction(
+                    registered_tool_name,
+                    std::forward<decltype(callable)>(callable),
+                    std::move(function_metadata));
             },
-            [this](const json& value, std::type_index expected_type) {
-                return invoke_adapter_.jsonTypeRegistry().fromJson(value, expected_type);
+            [this](const json& value, std::type_index expected_cpp_type) {
+                return invoke_adapter_.jsonTypeRegistry().fromJson(value, expected_cpp_type);
             });
     }
 

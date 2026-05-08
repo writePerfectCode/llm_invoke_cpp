@@ -115,16 +115,16 @@ public:
     };
 
     template<typename T>
-    void setObjectTypeName(std::string object_type_name)
+    void setObjectTypeName(std::string configured_object_type_name)
     {
-        if (object_type_name.empty())
+        if (configured_object_type_name.empty())
         {
             throw std::invalid_argument("object type name must not be empty");
         }
 
         std::unique_lock<MutexType> lock(mutex_);
-        object_type_names_[typeid(T)] = std::move(object_type_name);
-        explicit_object_type_names_[typeid(T)] = object_type_names_[typeid(T)];
+        registered_object_type_names_by_cpp_type_[typeid(T)] = std::move(configured_object_type_name);
+        configured_object_type_names_by_cpp_type_[typeid(T)] = registered_object_type_names_by_cpp_type_[typeid(T)];
     }
 
     void setTraceDispatcher(std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher)
@@ -138,14 +138,18 @@ public:
     }
 
     template<typename T>
-    ObjectHandle emplace(std::shared_ptr<T> object, std::string object_type_name = {}, ObjectOptions options = {})
+    ObjectHandle emplace(
+        std::shared_ptr<T> object,
+        std::string requested_object_type_name = {},
+        ObjectOptions options = {})
     {
         if (!object)
         {
             throw std::invalid_argument("object factory returned a null shared_ptr");
         }
 
-        const std::string resolved_object_type_name = resolveOrRememberObjectTypeName<T>(std::move(object_type_name));
+        const std::string resolved_object_type_name =
+            resolveOrRememberRegisteredObjectTypeName<T>(std::move(requested_object_type_name));
         const auto now = Clock::now();
 
         auto pending_events = makePendingTraceEvents();
@@ -175,11 +179,11 @@ public:
 
     template<typename T, typename U>
     requires (!is_shared_ptr_v<U>)
-    ObjectHandle emplace(U&& value, std::string object_type_name = {}, ObjectOptions options = {})
+    ObjectHandle emplace(U&& value, std::string requested_object_type_name = {}, ObjectOptions options = {})
     {
         return emplace<T>(
             std::make_shared<T>(std::forward<U>(value)),
-            std::move(object_type_name),
+            std::move(requested_object_type_name),
             std::move(options));
     }
 
@@ -187,7 +191,7 @@ public:
     {
         ensureObjectId(handle.object_id);
         auto pending_events = makePendingTraceEvents();
-        std::string destroyed_object_type;
+        std::string destroyed_object_type_name;
         bool destroyed = false;
 
         std::unique_lock<MutexType> lock(mutex_);
@@ -196,7 +200,7 @@ public:
         const auto it = objects_.find(handle.object_id);
         if (it != objects_.end())
         {
-            destroyed_object_type = it->second.object_type;
+            destroyed_object_type_name = it->second.object_type_name;
             objects_.erase(it);
             destroyed = true;
         }
@@ -207,7 +211,7 @@ public:
         {
             emitTraceEvent(
                 json_invoke::TraceEventKind::object_destroyed,
-                {{"object_id", handle.object_id}, {"object_type", destroyed_object_type}});
+                {{"object_id", handle.object_id}, {"object_type", destroyed_object_type_name}});
         }
 
         return destroyed;
@@ -238,7 +242,7 @@ public:
     }
 
     template<typename T>
-    ObjectAccess<T> checkoutObject(const ObjectHandle& handle, std::string_view expected_object_type)
+    ObjectAccess<T> checkoutObject(const ObjectHandle& handle, std::string_view expected_object_type_name)
     {
         ensureObjectId(handle.object_id);
 
@@ -249,10 +253,10 @@ public:
 
         try
         {
-            StoredObject& entry = findObjectLocked(handle.object_id);
-            validateObjectType(entry, handle, expected_object_type, typeid(T));
-            entry.last_used_at = now;
-            auto access = ObjectAccess<T>{std::static_pointer_cast<T>(entry.object), entry.invocation_mutex};
+            StoredObject& stored_object = findObjectLocked(handle.object_id);
+            validateObjectType(stored_object, handle, expected_object_type_name, typeid(T));
+            stored_object.last_used_at = now;
+            auto access = ObjectAccess<T>{std::static_pointer_cast<T>(stored_object.object), stored_object.invocation_mutex};
             lock.unlock();
 
             emitPendingTraceEvents(std::move(pending_events));
@@ -270,10 +274,10 @@ public:
     std::string objectTypeName() const
     {
         std::shared_lock<MutexType> lock(mutex_);
-        const auto it = object_type_names_.find(typeid(T));
-        if (it != object_type_names_.end())
+        const auto registered_name_it = registered_object_type_names_by_cpp_type_.find(typeid(T));
+        if (registered_name_it != registered_object_type_names_by_cpp_type_.end())
         {
-            return it->second;
+            return registered_name_it->second;
         }
 
         return fallbackObjectTypeName<T>();
@@ -283,18 +287,18 @@ public:
     std::optional<std::string> configuredObjectTypeName() const
     {
         std::shared_lock<MutexType> lock(mutex_);
-        const auto it = explicit_object_type_names_.find(typeid(T));
-        if (it == explicit_object_type_names_.end())
+        const auto configured_name_it = configured_object_type_names_by_cpp_type_.find(typeid(T));
+        if (configured_name_it == configured_object_type_names_by_cpp_type_.end())
         {
             return std::nullopt;
         }
 
-        return it->second;
+        return configured_name_it->second;
     }
 
 private:
     struct StoredObject {
-        std::string object_type;
+        std::string object_type_name;
         std::type_index cpp_type{typeid(void)};
         std::shared_ptr<void> object;
         std::shared_ptr<ObjectMutexType> invocation_mutex;
@@ -318,21 +322,21 @@ private:
     }
 
     template<typename T>
-    std::string resolveOrRememberObjectTypeName(std::string object_type_name)
+    std::string resolveOrRememberRegisteredObjectTypeName(std::string requested_object_type_name)
     {
         std::unique_lock<MutexType> lock(mutex_);
-        auto& stored_name = object_type_names_[typeid(T)];
-        if (!object_type_name.empty())
+        auto& registered_object_type_name = registered_object_type_names_by_cpp_type_[typeid(T)];
+        if (!requested_object_type_name.empty())
         {
-            stored_name = std::move(object_type_name);
-            explicit_object_type_names_[typeid(T)] = stored_name;
+            registered_object_type_name = std::move(requested_object_type_name);
+            configured_object_type_names_by_cpp_type_[typeid(T)] = registered_object_type_name;
         }
-        else if (stored_name.empty())
+        else if (registered_object_type_name.empty())
         {
-            stored_name = fallbackObjectTypeName<T>();
+            registered_object_type_name = fallbackObjectTypeName<T>();
         }
 
-        return stored_name;
+        return registered_object_type_name;
     }
 
     std::string makeObjectId()
@@ -375,7 +379,7 @@ private:
                     pending_events->push_back(json_invoke::makeTraceEvent(
                         json_invoke::TraceEventKind::object_expired,
                         {},
-                        {{"object_id", it->first}, {"object_type", it->second.object_type}}));
+                        {{"object_id", it->first}, {"object_type", it->second.object_type_name}}));
                 }
                 it = objects_.erase(it);
                 ++removed;
@@ -440,39 +444,39 @@ private:
     }
 
     static void validateObjectType(
-        const StoredObject& entry,
+        const StoredObject& stored_object,
         const ObjectHandle& handle,
-        std::string_view expected_object_type,
+        std::string_view expected_object_type_name,
         std::type_index expected_cpp_type)
     {
-        if (entry.cpp_type != expected_cpp_type)
+        if (stored_object.cpp_type != expected_cpp_type)
         {
             throw json_invoke::JsonInvokeError(
                 "object_type_mismatch",
                 "object '" + handle.object_id + "' is not compatible with the requested C++ type");
         }
 
-        if (!expected_object_type.empty() && entry.object_type != expected_object_type)
+        if (!expected_object_type_name.empty() && stored_object.object_type_name != expected_object_type_name)
         {
             throw json_invoke::JsonInvokeError(
                 "object_type_mismatch",
-                "object '" + handle.object_id + "' has type '" + entry.object_type + "', expected '" +
-                    std::string(expected_object_type) + "'");
+                "object '" + handle.object_id + "' has type '" + stored_object.object_type_name + "', expected '" +
+                    std::string(expected_object_type_name) + "'");
         }
 
-        if (!handle.object_type.empty() && entry.object_type != handle.object_type)
+        if (!handle.object_type.empty() && stored_object.object_type_name != handle.object_type)
         {
             throw json_invoke::JsonInvokeError(
                 "object_type_mismatch",
-                "object '" + handle.object_id + "' has type '" + entry.object_type + "', not '" +
+                "object '" + handle.object_id + "' has type '" + stored_object.object_type_name + "', not '" +
                     handle.object_type + "'");
         }
     }
 
     mutable MutexType mutex_;
     std::unordered_map<std::string, StoredObject> objects_;
-    std::unordered_map<std::type_index, std::string> object_type_names_;
-    std::unordered_map<std::type_index, std::string> explicit_object_type_names_;
+    std::unordered_map<std::type_index, std::string> registered_object_type_names_by_cpp_type_;
+    std::unordered_map<std::type_index, std::string> configured_object_type_names_by_cpp_type_;
     mutable std::mt19937_64 random_engine_{std::random_device{}()};
     std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher_{std::make_shared<json_invoke::TraceDispatcher>()};
 };
