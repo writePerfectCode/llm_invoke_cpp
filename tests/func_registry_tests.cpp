@@ -1,15 +1,18 @@
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <any>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <func_registry/func_registry.hpp>
 
 TEST_CASE("func_registry supports typed invocation and summaries")
 {
-    func_registry::FuncRegistry registry;
+    func_registry::FuncRegistryThreadSafe registry;
 
     registry.registerFunction(
         "sum",
@@ -31,7 +34,7 @@ TEST_CASE("func_registry supports typed invocation and summaries")
 
 TEST_CASE("func_registry sorts descriptions and validates metadata")
 {
-    func_registry::FuncRegistry registry;
+    func_registry::FuncRegistryThreadSafe registry;
 
     registry.registerFunction("beta", [] { return 2; }, "Second function.");
     registry.registerFunction("alpha", [] { return 1; }, "First function.");
@@ -52,7 +55,7 @@ TEST_CASE("func_registry sorts descriptions and validates metadata")
 
 TEST_CASE("func_registry reports duplicate registration and invocation errors")
 {
-    func_registry::FuncRegistry registry;
+    func_registry::FuncRegistryThreadSafe registry;
 
     registry.registerFunction("sum", [](int lhs, int rhs) { return lhs + rhs; });
 
@@ -71,4 +74,71 @@ TEST_CASE("func_registry reports duplicate registration and invocation errors")
         registry.callByName("sum", bad_args),
         doctest::Contains("type mismatch at arg[0]"),
         std::runtime_error);
+}
+
+TEST_CASE("func_registry exposes explicit thread-safe and unsafe aliases")
+{
+    static_assert(
+        std::is_same_v<
+            func_registry::FuncRegistryThreadSafe,
+            func_registry::BasicFuncRegistry<true>>);
+    static_assert(
+        !std::is_same_v<
+            func_registry::FuncRegistryThreadSafe,
+            func_registry::FuncRegistryUnsafe>);
+}
+
+TEST_CASE("func_registry thread-safe alias supports concurrent invocation")
+{
+    func_registry::FuncRegistryThreadSafe registry;
+    registry.registerFunction(
+        "sum",
+        [](int lhs, int rhs) { return lhs + rhs; },
+        func_registry::FunctionMetadata{{"lhs", "rhs"}, "Add two integers."});
+
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> workers;
+    workers.reserve(8);
+
+    for (int worker = 0; worker < 8; ++worker)
+    {
+        workers.emplace_back([&registry, &failed]() {
+            for (int iteration = 0; iteration < 100; ++iteration)
+            {
+                if (registry.callByNameAs<int>("sum", 2, 3) != 5)
+                {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+            }
+        });
+    }
+
+    for (auto& worker : workers)
+    {
+        worker.join();
+    }
+
+    CHECK_FALSE(failed.load(std::memory_order_relaxed));
+}
+
+TEST_CASE("func_registry forEachFunction snapshots entries before invoking the visitor")
+{
+    func_registry::FuncRegistryThreadSafe registry;
+    registry.registerFunction("alpha", [] { return 1; }, "First function.");
+
+    std::size_t visited = 0;
+    registry.forEachFunction([&](std::string_view name, const func_registry::AnyCallable&) {
+        ++visited;
+        if (name == "alpha")
+        {
+            registry.registerFunction("beta", [] { return 2; }, "Second function.");
+        }
+    });
+
+    CHECK(visited == 1);
+    CHECK(registry.callByNameAs<int>("beta") == 2);
+
+    const auto descriptions = func_registry::describeAllFunctions(registry);
+    REQUIRE(descriptions.size() == 2);
 }

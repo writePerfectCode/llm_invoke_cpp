@@ -7,7 +7,9 @@
 #include <functional>
 #include <iomanip>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -225,17 +227,19 @@ public:
 
     void setSink(TraceSink sink)
     {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         sink_ = std::move(sink);
     }
 
-    const TraceSink& sink() const noexcept
+    TraceSink sink() const
     {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         return sink_;
     }
 
-    bool enabled() const noexcept
+    bool enabled() const
     {
-        return static_cast<bool>(sink_);
+        return static_cast<bool>(sink());
     }
 
     RequestScope beginRequest() const
@@ -261,25 +265,28 @@ public:
 
     void emit(TraceEventKind kind, const std::string& tool_name, json payload) const
     {
-        if (!enabled())
+        TraceSink active_sink = sink();
+        if (!active_sink)
         {
             return;
         }
 
-        sink_(makeTraceEvent(kind, tool_name, std::move(payload)));
+        active_sink(makeTraceEvent(kind, tool_name, std::move(payload)));
     }
 
     void emit(const TraceEvent& event) const
     {
-        if (!enabled())
+        TraceSink active_sink = sink();
+        if (!active_sink)
         {
             return;
         }
 
-        sink_(event);
+        active_sink(event);
     }
 
 private:
+    mutable std::shared_mutex mutex_;
     TraceSink sink_{};
 };
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iostream>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -278,12 +280,14 @@ public:
 
     BasicJsonSessionInvokeAdapter()
     {
+        emitUnsafeConstructionWarning();
         runtime_.setTraceDispatcher(invoke_adapter_.sharedTraceDispatcher());
     }
 
     explicit BasicJsonSessionInvokeAdapter(MapType& func_registry)
         : invoke_adapter_(func_registry)
     {
+        emitUnsafeConstructionWarning();
         runtime_.setTraceDispatcher(invoke_adapter_.sharedTraceDispatcher());
     }
 
@@ -438,17 +442,24 @@ public:
     }
 
 private:
+    static void emitUnsafeConstructionWarning()
+    {
+        if constexpr (EnableThreadSafety)
+        {
+            return;
+        }
+
+        static std::once_flag warning_once;
+        std::call_once(warning_once, []() {
+            std::clog
+                << "warning: json_session_invoke::BasicJsonSessionInvokeAdapter<false> is single-threaded only; "
+                << "use JsonSessionInvokeAdapterThreadSafe for shared multi-threaded access.\n";
+        });
+    }
+
     bool isFunctionRegistered(const std::string& tool_name) const noexcept
     {
-        try
-        {
-            static_cast<void>(invoke_adapter_.functionRegistry().getFunction(tool_name));
-            return true;
-        }
-        catch (...)
-        {
-            return false;
-        }
+        return invoke_adapter_.hasRegisteredFunction(tool_name);
     }
 
     static std::string defaultFactoryToolName(std::string_view object_type_name)
@@ -594,7 +605,7 @@ private:
                     std::move(function_metadata));
             },
             [this](const json& value, std::type_index expected_cpp_type) {
-                return invoke_adapter_.jsonTypeRegistry().fromJson(value, expected_cpp_type);
+                return invoke_adapter_.convertFromJson(value, expected_cpp_type);
             });
     }
 
@@ -613,7 +624,7 @@ private:
 
         if constexpr (json_invoke::detail::can_auto_register_type_v<ObjectType>)
         {
-            if (!invoke_adapter_.jsonTypeRegistry().canRead(typeid(ObjectType)))
+            if (!invoke_adapter_.canConvertFromJson(typeid(ObjectType)))
             {
                 invoke_adapter_.template registerType<ObjectType>();
             }
@@ -681,7 +692,7 @@ private:
     StatefulDefaults stateful_defaults_{};
 };
 
-using JsonSessionInvokeAdapter = BasicJsonSessionInvokeAdapter<false>;
 using JsonSessionInvokeAdapterThreadSafe = BasicJsonSessionInvokeAdapter<true>;
+using JsonSessionInvokeAdapterUnsafe = BasicJsonSessionInvokeAdapter<false>;
 
 } // namespace json_session_invoke

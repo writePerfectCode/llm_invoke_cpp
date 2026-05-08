@@ -50,7 +50,7 @@ struct json_invoke::json_traits<Counter> {
 
 int main()
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
     json_session_invoke::SessionObjectOptions counter_options;
     counter_options.serialized = true;
 

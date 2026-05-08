@@ -2,8 +2,10 @@
 
 #include <chrono>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <func_registry/func_registry.hpp>
@@ -38,7 +40,7 @@ struct Counter {
 };
 
 struct CounterHarness {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
     CounterHarness()
     {
@@ -130,7 +132,7 @@ TEST_CASE("json_stateful preserves object state across repeated tool calls")
 
 TEST_CASE("json_session_invoke can also register stateless functions directly")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
     adapter.registerFunction(
         "sum",
@@ -149,7 +151,7 @@ TEST_CASE("json_session_invoke can also register stateless functions directly")
 
 TEST_CASE("json_session_invoke forwards explicit execution semantics for wrapped stateless tools")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
     std::string log;
 
     adapter.registerFunction(
@@ -178,7 +180,7 @@ TEST_CASE("json_session_invoke forwards explicit execution semantics for wrapped
 
 TEST_CASE("json_session_invoke emits trace events for object create and destroy")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
     std::vector<json_invoke::TraceEvent> events;
 
     adapter.setTraceSink([&events](const json_invoke::TraceEvent& event) {
@@ -233,7 +235,7 @@ TEST_CASE("json_session_invoke emits trace events for object create and destroy"
 
 TEST_CASE("json_session_invoke emits trace events for object expiration")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
     std::vector<json_invoke::TraceEvent> events;
 
     adapter.setTraceSink([&events](const json_invoke::TraceEvent& event) {
@@ -279,7 +281,7 @@ TEST_CASE("json_session_invoke emits trace events for object expiration")
 
 TEST_CASE("json_session_invoke rejects direct member function registration")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
     CHECK_THROWS_AS(adapter.registerFunction("counter_value", &Counter::current), std::invalid_argument);
     CHECK_THROWS_AS(adapter.registerFunction("counter_value", &Counter::current, "Read the current counter value."), std::invalid_argument);
@@ -293,7 +295,7 @@ TEST_CASE("json_session_invoke rejects direct member function registration")
 
 TEST_CASE("json_session_invoke allows static member function registration as stateless")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
     adapter.registerFunction(
         "clamp_delta",
@@ -340,7 +342,7 @@ TEST_CASE("json_stateful reports invalid handles and destroy lifecycle")
 
 TEST_CASE("json_stateful builder auto registers default destroy when omitted")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
     adapter
         .stateful<Counter>("counter")
@@ -369,8 +371,8 @@ TEST_CASE("json_stateful builder auto registers default destroy when omitted")
 
 TEST_CASE("json_stateful builder can customize auto destroy defaults")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
-    json_session_invoke::JsonSessionInvokeAdapter::StatefulDefaults defaults;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe::StatefulDefaults defaults;
     defaults.destroy_description = "Release one previously created counter handle.";
     adapter.setStatefulDefaults(std::move(defaults));
 
@@ -387,8 +389,8 @@ TEST_CASE("json_stateful builder can customize auto destroy defaults")
 
 TEST_CASE("json_stateful builder can disable auto destroy registration")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
-    json_session_invoke::JsonSessionInvokeAdapter::StatefulDefaults defaults;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe::StatefulDefaults defaults;
     defaults.auto_register_destroy = false;
     adapter.setStatefulDefaults(std::move(defaults));
 
@@ -407,7 +409,7 @@ TEST_CASE("json_stateful builder can disable auto destroy registration")
 
 TEST_CASE("json_stateful builder does not auto register default destroy after custom destroy")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
     adapter
         .stateful<Counter>("counter")
@@ -439,7 +441,7 @@ TEST_CASE("json_stateful builder does not auto register default destroy after cu
 
 TEST_CASE("json_stateful can lazily clean up expired handles")
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
     json_session_invoke::SessionObjectOptions expiring_options;
     expiring_options.idle_timeout = std::chrono::milliseconds{0};
 
@@ -462,4 +464,35 @@ TEST_CASE("json_stateful can lazily clean up expired handles")
         {{"name", "destroy_counter"}, {"args", {{"handle", handle}}}});
     CHECK(stale_lookup_response.at("ok").get<bool>());
     CHECK_FALSE(stale_lookup_response.at("value").get<bool>());
+}
+
+TEST_CASE("json_session adapter exposes explicit thread-safe and unsafe aliases")
+{
+    static_assert(
+        std::is_same_v<
+            json_session_invoke::JsonSessionInvokeAdapterThreadSafe,
+            json_session_invoke::BasicJsonSessionInvokeAdapter<true>>);
+    static_assert(
+        !std::is_same_v<
+            json_session_invoke::JsonSessionInvokeAdapterThreadSafe,
+            json_session_invoke::JsonSessionInvokeAdapterUnsafe>);
+
+    std::ostringstream captured_warning;
+    auto* original_buffer = std::clog.rdbuf(captured_warning.rdbuf());
+
+    {
+        json_session_invoke::JsonSessionInvokeAdapterUnsafe first;
+        json_session_invoke::JsonSessionInvokeAdapterUnsafe second;
+        static_cast<void>(first);
+        static_cast<void>(second);
+    }
+
+    std::clog.rdbuf(original_buffer);
+
+    const std::string warning = captured_warning.str();
+    CHECK(warning.find("single-threaded only") != std::string::npos);
+    CHECK(warning.find("JsonSessionInvokeAdapterThreadSafe") != std::string::npos);
+    CHECK(warning.find("JsonSessionInvokeAdapter\n") == std::string::npos);
+    CHECK(warning.find("\n") != std::string::npos);
+    CHECK(warning.find("single-threaded only", warning.find("single-threaded only") + 1) == std::string::npos);
 }

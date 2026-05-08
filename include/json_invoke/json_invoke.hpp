@@ -3,7 +3,9 @@
 #include <any>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -432,6 +434,7 @@ public:
     {
         if constexpr (!std::is_void_v<T>)
         {
+            std::unique_lock<std::shared_mutex> lock(mutex_);
             from_json_[typeid(T)] = [converter = std::forward<FromJson>(from_json)](const json& value) -> std::any {
                 return std::any(converter(value));
             };
@@ -453,6 +456,7 @@ public:
             return std::any{};
         }
 
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         const auto it = from_json_.find(expected_type);
         if (it == from_json_.end())
         {
@@ -484,6 +488,7 @@ public:
             return nullptr;
         }
 
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         const auto it = to_json_.find(actual_type);
         if (it == to_json_.end())
         {
@@ -508,20 +513,33 @@ public:
         }
     }
 
-    bool canRead(std::type_index expected_type) const noexcept
+    bool canRead(std::type_index expected_type) const
     {
-        return expected_type == typeid(void) || from_json_.find(expected_type) != from_json_.end();
+        if (expected_type == typeid(void))
+        {
+            return true;
+        }
+
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return from_json_.find(expected_type) != from_json_.end();
     }
 
-    bool canWrite(std::type_index actual_type) const noexcept
+    bool canWrite(std::type_index actual_type) const
     {
-        return actual_type == typeid(void) || to_json_.find(actual_type) != to_json_.end();
+        if (actual_type == typeid(void))
+        {
+            return true;
+        }
+
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return to_json_.find(actual_type) != to_json_.end();
     }
 
 private:
     using FromJsonFn = std::function<std::any(const json&)>;
     using ToJsonFn = std::function<json(const std::any&)>;
 
+    mutable std::shared_mutex mutex_;
     std::unordered_map<std::type_index, FromJsonFn> from_json_;
     std::unordered_map<std::type_index, ToJsonFn> to_json_;
 };
@@ -540,6 +558,7 @@ template<bool EnableThreadSafety = false>
 class BasicJsonInvokeAdapter {
 public:
     using MapType = BasicFuncRegistry<EnableThreadSafety>;
+    using MutexType = std::conditional_t<EnableThreadSafety, std::shared_mutex, func_registry::NullSharedMutex>;
 
     struct AutoRegistrationHooks {
         detail::TypeRegistrationHook ret_type_hook{nullptr};
@@ -554,26 +573,6 @@ public:
     explicit BasicJsonInvokeAdapter(MapType& func_registry)
         : func_registry_(func_registry)
     {
-    }
-
-    MapType& functionRegistry() noexcept
-    {
-        return func_registry_;
-    }
-
-    const MapType& functionRegistry() const noexcept
-    {
-        return func_registry_;
-    }
-
-    JsonTypeRegistry& jsonTypeRegistry() noexcept
-    {
-        return json_type_registry_;
-    }
-
-    const JsonTypeRegistry& jsonTypeRegistry() const noexcept
-    {
-        return json_type_registry_;
     }
 
     template<typename T>
@@ -598,6 +597,29 @@ public:
         return trace_dispatcher_;
     }
 
+    bool hasRegisteredFunction(const std::string& name) const noexcept
+    {
+        try
+        {
+            static_cast<void>(func_registry_.getFunction(name));
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool canConvertFromJson(std::type_index expected_type) const
+    {
+        return json_type_registry_.canRead(expected_type);
+    }
+
+    std::any convertFromJson(const json& value, std::type_index expected_type) const
+    {
+        return json_type_registry_.fromJson(value, expected_type);
+    }
+
     template<typename Fn>
     requires (!std::is_same_v<std::remove_cvref_t<Fn>, AnyCallable>)
     void registerFunction(const std::string& name, Fn&& fn)
@@ -606,9 +628,9 @@ public:
         const auto semantics = detail::annotatedExecutionSemantics(fn);
         AnyCallable callable = func_registry::makeCallable(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerCallableTypeIntrospection<Callable>();
+        autoRegisterTypes(makeCallableTypeHooks<Callable>());
         func_registry_.registerFunction(name, std::move(callable));
         annotateToolExecutionSemantics(name, semantics);
-        autoRegisterTypes(name, makeCallableTypeHooks<Callable>());
     }
 
     template<typename Fn>
@@ -619,9 +641,9 @@ public:
         const auto semantics = detail::annotatedExecutionSemantics(fn);
         AnyCallable callable = func_registry::makeCallable(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerCallableTypeIntrospection<Callable>();
+        autoRegisterTypes(makeCallableTypeHooks<Callable>());
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
         annotateToolExecutionSemantics(name, semantics);
-        autoRegisterTypes(name, makeCallableTypeHooks<Callable>());
     }
 
     template<typename Fn>
@@ -632,9 +654,9 @@ public:
         const auto semantics = detail::annotatedExecutionSemantics(fn);
         AnyCallable callable = func_registry::makeCallable(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerCallableTypeIntrospection<Callable>();
+        autoRegisterTypes(makeCallableTypeHooks<Callable>());
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
         annotateToolExecutionSemantics(name, semantics);
-        autoRegisterTypes(name, makeCallableTypeHooks<Callable>());
     }
 
     template<typename R, typename... Args, typename Fn>
@@ -643,9 +665,9 @@ public:
         const auto semantics = detail::annotatedExecutionSemantics(fn);
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerSignatureTypeIntrospection<R(Args...)>();
+        autoRegisterTypes(makeSignatureTypeHooks<R(Args...)>());
         func_registry_.registerFunction(name, std::move(callable));
         annotateToolExecutionSemantics(name, semantics);
-        autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     template<typename R, typename... Args, typename Fn>
@@ -654,9 +676,9 @@ public:
         const auto semantics = detail::annotatedExecutionSemantics(fn);
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerSignatureTypeIntrospection<R(Args...)>();
+        autoRegisterTypes(makeSignatureTypeHooks<R(Args...)>());
         func_registry_.registerFunction(name, std::move(callable), std::move(metadata));
         annotateToolExecutionSemantics(name, semantics);
-        autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     template<typename R, typename... Args, typename Fn>
@@ -665,9 +687,9 @@ public:
         const auto semantics = detail::annotatedExecutionSemantics(fn);
         AnyCallable callable = func_registry::makeCallableAs<R(Args...)>(detail::unwrapCallable(std::forward<Fn>(fn)));
         func_registry::registerSignatureTypeIntrospection<R(Args...)>();
+        autoRegisterTypes(makeSignatureTypeHooks<R(Args...)>());
         func_registry_.registerFunction(name, std::move(callable), std::move(description));
         annotateToolExecutionSemantics(name, semantics);
-        autoRegisterTypes(name, makeSignatureTypeHooks<R(Args...)>());
     }
 
     json invokeJson(const json& request) const
@@ -802,12 +824,14 @@ private:
     {
         if (semantics.has_value())
         {
+            std::unique_lock<MutexType> lock(state_mutex_);
             tool_execution_semantics_[name] = *semantics;
         }
     }
 
     json applyToolExecutionSemanticsToToolJson(const std::string& name, json tool) const
     {
+        std::shared_lock<MutexType> lock(state_mutex_);
         const auto it = tool_execution_semantics_.find(name);
         if (it != tool_execution_semantics_.end())
         {
@@ -819,6 +843,7 @@ private:
 
     json applyToolExecutionSemanticsToSchemaJson(const std::string& name, json schema) const
     {
+        std::shared_lock<MutexType> lock(state_mutex_);
         const auto it = tool_execution_semantics_.find(name);
         if (it != tool_execution_semantics_.end())
         {
@@ -859,6 +884,24 @@ private:
     // register_type_hook is a function template. After being instantiated for different types T, it calls the registerType<T>() method of JsonTypeRegistry to register the JSON converter.
     // In turn, registerType implements conversion from JSON to C++ types via defaultFromJsonValue, which further uses from_json_value (for custom types) or json's get<T>() (for basic types/standard library types).
     // It implements conversion from C++ types to JSON via defaultToJsonValue, which further uses to_json_value (for custom types) or the json constructor (json(value)).
+    void autoRegisterTypes(const AutoRegistrationHooks& hooks)
+    {
+        for (std::size_t index = 0; index < hooks.arg_type_hooks.size(); ++index)
+        {
+            if (hooks.arg_type_hooks[index] == nullptr)
+            {
+                continue;
+            }
+
+            hooks.arg_type_hooks[index](&json_type_registry_);
+        }
+
+        if (hooks.ret_type_hook != nullptr)
+        {
+            hooks.ret_type_hook(&json_type_registry_);
+        }
+    }
+
     void autoRegisterTypes(const std::string& name, const AutoRegistrationHooks& hooks)
     {
         FunctionInfo info = getFunctionInfo(name);
@@ -1210,11 +1253,12 @@ private:
     MapType owned_func_registry_{};
     MapType& func_registry_;
     JsonTypeRegistry json_type_registry_;
+    mutable MutexType state_mutex_;
     std::unordered_map<std::string, ToolExecutionSemantics> tool_execution_semantics_;
     std::shared_ptr<TraceDispatcher> trace_dispatcher_{std::make_shared<TraceDispatcher>()};
 };
 
-using JsonInvokeAdapter = BasicJsonInvokeAdapter<false>;
 using JsonInvokeAdapterThreadSafe = BasicJsonInvokeAdapter<true>;
+using JsonInvokeAdapterUnsafe = BasicJsonInvokeAdapter<false>;
 
 } // namespace json_invoke

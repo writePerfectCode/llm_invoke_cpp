@@ -209,8 +209,17 @@ public:
     template<typename Visitor>
     void forEachFunction(Visitor&& visitor) const
     {
-        std::shared_lock<mutex_type> lock(mutex_);
-        for (const auto& entry : tools_)
+        std::vector<std::pair<std::string, AnyCallable>> snapshot;
+        {
+            std::shared_lock<mutex_type> lock(mutex_);
+            snapshot.reserve(tools_.size());
+            for (const auto& entry : tools_)
+            {
+                snapshot.emplace_back(entry.first, entry.second);
+            }
+        }
+
+        for (const auto& entry : snapshot)
         {
             visitor(entry.first, entry.second);
         }
@@ -376,7 +385,7 @@ private:
     mutable mutex_type mutex_;
 };
 
-using FuncRegistry = BasicFuncRegistry<false>;
 using FuncRegistryThreadSafe = BasicFuncRegistry<true>;
+using FuncRegistryUnsafe = BasicFuncRegistry<false>;
 
 } // namespace func_registry

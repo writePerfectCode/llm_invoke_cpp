@@ -38,7 +38,7 @@ void printResponse(const std::string& label, const json_invoke::json& response)
     std::cout << response.dump(2) << std::endl;
 }
 
-void installTracePrinter(json_session_invoke::JsonSessionInvokeAdapter& adapter)
+void installTracePrinter(json_session_invoke::JsonSessionInvokeAdapterThreadSafe& adapter)
 {
     adapter.setTraceSink([](const json_invoke::TraceEvent& event) {
         std::cout << "\n[trace]" << std::endl;
@@ -47,7 +47,7 @@ void installTracePrinter(json_session_invoke::JsonSessionInvokeAdapter& adapter)
 }
 
 void registerDemoTools(
-    json_session_invoke::JsonSessionInvokeAdapter& adapter,
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe& adapter,
     json_session_invoke::SessionObjectOptions counter_options)
 {
     adapter.registerFunction(
@@ -76,7 +76,7 @@ void registerDemoTools(
 
 int main()
 {
-    json_session_invoke::JsonSessionInvokeAdapter adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
     installTracePrinter(adapter);
 
     json_session_invoke::SessionObjectOptions counter_options;
@@ -129,7 +129,7 @@ int main()
         }));
 
     printSection("Expiration Path");
-    json_session_invoke::JsonSessionInvokeAdapter expiration_adapter;
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe expiration_adapter;
     installTracePrinter(expiration_adapter);
 
     json_session_invoke::SessionObjectOptions expiration_options;

@@ -24,7 +24,7 @@ static Person getPerson()
 
 int main()
 {
-    func_registry::FuncRegistry registry;
+    func_registry::FuncRegistryThreadSafe registry;
 
     registry.registerFunction("add", add, "Add two integers.");
     registry.registerFunction("getPerson", getPerson, "Return a person payload as Person.");

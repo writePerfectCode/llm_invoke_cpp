@@ -1,7 +1,10 @@
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <optional>
 #include <string>
+#include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <json_invoke/json_invoke.hpp>
@@ -23,9 +26,8 @@ std::optional<int> addOptional(std::optional<int> lhs, int rhs)
     return *lhs + rhs;
 }
 
-json_invoke::JsonInvokeAdapter makeSnapshotAdapter()
+void configureSnapshotAdapter(json_invoke::JsonInvokeAdapterThreadSafe& adapter)
 {
-    json_invoke::JsonInvokeAdapter adapter;
     adapter.registerFunction(
         "add_optional",
         addOptional,
@@ -37,14 +39,13 @@ json_invoke::JsonInvokeAdapter makeSnapshotAdapter()
         func_registry::FunctionMetadata{
             {"requested_priority", "customer_blocked", "production_impact", "affected_users"},
             "Recommend an incident priority."});
-    return adapter;
 }
 
 } // namespace
 
 TEST_CASE("json_invoke adapts object results and typed extraction")
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     adapter.registerFunction("get_person", getPerson, "Return one person.");
 
     const auto response = adapter.invokeJson({{"name", "get_person"}, {"args", json_invoke::json::array()}});
@@ -59,7 +60,7 @@ TEST_CASE("json_invoke adapts object results and typed extraction")
 
 TEST_CASE("json_invoke supports named arguments, optional parameters, and stringified tool arguments")
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     adapter.registerFunction(
         "add_optional",
         addOptional,
@@ -91,7 +92,7 @@ TEST_CASE("json_invoke supports named arguments, optional parameters, and string
 
 TEST_CASE("json_invoke exports enum-aware schemas and structured errors")
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     adapter.registerFunction(
         "recommend_priority",
         recommendIncidentPriority,
@@ -128,7 +129,7 @@ TEST_CASE("json_invoke exports enum-aware schemas and structured errors")
 
 TEST_CASE("json_invoke exports explicit execution semantics for wrapped stateless tools")
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     std::string log;
 
     adapter.registerFunction(
@@ -161,7 +162,7 @@ TEST_CASE("json_invoke exports explicit execution semantics for wrapped stateles
 
 TEST_CASE("json_invoke emits tracing events for successful and failed calls")
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     std::vector<json_invoke::TraceEvent> events;
 
     adapter.setTraceSink([&events](const json_invoke::TraceEvent& event) {
@@ -210,7 +211,7 @@ TEST_CASE("json_invoke emits tracing events for successful and failed calls")
 
 TEST_CASE("vector trace recorder captures structured trace events")
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     json_invoke::VectorTraceRecorder recorder;
 
     adapter.setTraceSink(recorder.sink());
@@ -233,9 +234,75 @@ TEST_CASE("vector trace recorder captures structured trace events")
     CHECK(trace_json[1].at("payload").at("response").at("value").get<int>() == 7);
 }
 
+TEST_CASE("json_invoke exposes explicit thread-safe and unsafe aliases")
+{
+    static_assert(
+        std::is_same_v<
+            json_invoke::JsonInvokeAdapterThreadSafe,
+            json_invoke::BasicJsonInvokeAdapter<true>>);
+    static_assert(
+        !std::is_same_v<
+            json_invoke::JsonInvokeAdapterThreadSafe,
+            json_invoke::JsonInvokeAdapterUnsafe>);
+}
+
+TEST_CASE("json_invoke exposes narrow helper APIs without leaking raw registries")
+{
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
+    adapter.registerFunction("get_person", getPerson, "Return one person.");
+
+    CHECK(adapter.hasRegisteredFunction("get_person"));
+    CHECK_FALSE(adapter.hasRegisteredFunction("missing_tool"));
+    CHECK(adapter.canConvertFromJson(typeid(Person)));
+
+    const std::any converted = adapter.convertFromJson(
+        json_invoke::json{{"name", "Bob"}, {"age", 41}},
+        typeid(Person));
+    const auto& person = std::any_cast<const Person&>(converted);
+    CHECK(person.getName() == "Bob");
+    CHECK(person.getAge() == 41);
+}
+
+TEST_CASE("json_invoke thread-safe adapter supports concurrent invocations")
+{
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
+    adapter.registerFunction(
+        "sum",
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers."});
+
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> workers;
+    workers.reserve(8);
+
+    for (int worker = 0; worker < 8; ++worker)
+    {
+        workers.emplace_back([&adapter, &failed]() {
+            for (int iteration = 0; iteration < 100; ++iteration)
+            {
+                const auto response = adapter.invokeJson(
+                    {{"name", "sum"}, {"args", {{"left", 2}, {"right", 5}}}});
+                if (!response.at("ok").get<bool>() || response.at("value").get<int>() != 7)
+                {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+            }
+        });
+    }
+
+    for (auto& worker : workers)
+    {
+        worker.join();
+    }
+
+    CHECK_FALSE(failed.load(std::memory_order_relaxed));
+}
+
 TEST_CASE("json_invoke tool metadata matches JSON snapshots")
 {
-    const auto adapter = makeSnapshotAdapter();
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
+    configureSnapshotAdapter(adapter);
 
     test_support::checkSnapshot("tool_schemas_snapshot.json", adapter.getAllToolSchemasJson().dump(2));
 }

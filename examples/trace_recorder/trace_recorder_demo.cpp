@@ -18,7 +18,7 @@ void printTrace(const json_invoke::VectorTraceRecorder& recorder)
 }
 
 void invokeAndPrint(
-    json_invoke::JsonInvokeAdapter& adapter,
+    json_invoke::JsonInvokeAdapterThreadSafe& adapter,
     json_invoke::VectorTraceRecorder& recorder,
     const std::string& label,
     json_invoke::json request)
@@ -33,7 +33,7 @@ void invokeAndPrint(
 
 int main()
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
     json_invoke::VectorTraceRecorder recorder;
 
     adapter.setTraceSink(recorder.sink());

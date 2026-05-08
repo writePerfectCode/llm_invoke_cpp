@@ -7,7 +7,7 @@
 
 int main()
 {
-    json_invoke::JsonInvokeAdapter adapter;
+    json_invoke::JsonInvokeAdapterThreadSafe adapter;
 
     adapter.registerFunction("add", json_invoke::readOnly([](int x, int y) { return x + y; }), "Add two integers.");
     adapter.registerFunction("getPerson", json_invoke::readOnly(getPerson), "Construct one person.");

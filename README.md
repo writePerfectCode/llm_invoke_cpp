@@ -45,7 +45,7 @@ Quick core example
 ```cpp
 #include <func_registry/func_registry.hpp>
 
-func_registry::FuncRegistry registry;
+func_registry::FuncRegistryThreadSafe registry;
 registry.registerFunction("sum", [](int a, int b) { return a + b; }, "Add two integers.");
 
 int value = registry.callByNameWrap("sum", 2, 3);
@@ -77,7 +77,7 @@ struct json_invoke::json_traits<Person> {
   }
 };
 
-json_invoke::JsonInvokeAdapter adapter;
+json_invoke::JsonInvokeAdapterThreadSafe adapter;
 adapter.registerFunction("get_person", json_invoke::readOnly([] { return Person{"Alice", 30}; }), "Return one person.");
 std::cout << adapter.invoke({{"name", "get_person"}, {"args", json_invoke::json::array()}}).dump(2) << std::endl;
 ```
@@ -115,33 +115,36 @@ target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_session_invoke)
 
 API notes
 
-- `func_registry::FuncRegistry`: register functions and invoke them by name.
+- `func_registry::FuncRegistryThreadSafe`: register functions and invoke them by name when the registry may be shared across threads.
+- `func_registry::FuncRegistryUnsafe`: explicit single-threaded variant for thread-confined ownership.
 - `func_registry::FunctionMetadata`: attach descriptions and explicit parameter names.
 - `registerFunctionAs(...)`: register a callable under an explicit signature.
 - `describeFunction(name)` / `describeAllFunctions()`: render concise human-readable C++ function summaries.
 - Include `tool_meta/tool_introspection.hpp` for `getToolSpec(name)` / `getAllToolSpecs()`.
-- `json_invoke::JsonInvokeAdapter`: accept JSON tool requests and return a conversion-friendly result wrapper.
-- `json_invoke::JsonInvokeAdapter()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
-- `json_invoke::JsonInvokeAdapter::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
+- `json_invoke::JsonInvokeAdapterThreadSafe`: accept JSON tool requests and return a conversion-friendly result wrapper for shared multi-threaded access.
+- `json_invoke::JsonInvokeAdapterUnsafe`: explicit single-threaded variant for thread-confined ownership when every registration and invocation stays on one thread.
+- `json_invoke::JsonInvokeAdapterThreadSafe()` owns an internal function registry by default; advanced callers can still inject an existing registry instance.
+- `json_invoke::JsonInvokeAdapterThreadSafe::registerFunction(...)`: register a callable and eagerly auto-register default JSON-capable argument and return types; later `registerType(...)` calls can override those defaults.
 - Wrap stateless tools with `json_invoke::readOnly(...)` or `json_invoke::mutating(...)` when you want exported metadata to include `x-execution-semantics`.
 - `json_invoke::TraceEvent` / `json_invoke::TraceSink`: opt-in tracing hooks for invoke and session lifecycle events; stable top-level fields include `event`, `timestamp`, `request_id`, `tool_name`, `duration_ms`, and event-specific `payload`.
 - `json_invoke::traceEventToJson(...)`: serialize one `TraceEvent` into the stable JSON shape used by the tracing demo and recorder helpers.
 - `json_invoke::VectorTraceRecorder`: lightweight collector from `include/tools/trace_recorder.hpp` that exposes a ready-to-use `TraceSink` and exports recorded events through `toJson()`.
-- `json_invoke::JsonInvokeAdapter::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
+- `json_invoke::JsonInvokeAdapterThreadSafe::getAllToolSummariesJson()` / `getToolSchemaJson(...)` / `getAllToolSchemasJson()`: export lighter summaries or full JSON schemas directly from the adapter.
 - `json_invoke::getAllToolSummariesJson(registry)`: emit concise tool summaries with only tool name and description for low-context LLM tool selection.
 - `json_invoke::getToolSchemaJson(registry, name)` / `json_invoke::getAllToolSchemasJson(registry)`: emit JSON schemas from registered tool metadata without triggering invocation-time conversion checks.
-- `json_invoke::JsonInvokeAdapter::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.
-- `json_invoke::JsonInvokeAdapter::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
-- `json_session_invoke::JsonSessionInvokeAdapter`: higher-level session adapter that composes `json_invoke` and is the recommended entry point for stateful object lifecycles.
+- `json_invoke::JsonInvokeAdapterThreadSafe::invoke(...)`: supports `.dump(2)` for raw response viewing and implicit conversion to strong C++ result types.
+- `json_invoke::JsonInvokeAdapterThreadSafe::invokeJson(...)`: execute a JSON request and return the full raw JSON response directly.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe`: higher-level session adapter that composes `json_invoke` and is the recommended thread-safe entry point for stateful object lifecycles.
+- `json_session_invoke::JsonSessionInvokeAdapterUnsafe`: explicit single-threaded variant for thread-confined schedulers or actor-style ownership. Constructing it prints a one-time warning so accidental shared use is easier to catch.
 - `json_session_invoke::SessionObjectHandle` / `json_session_invoke::SessionObjectOptions`: clearer public aliases for the session-layer handle and options types; `ObjectHandle` / `ObjectOptions` remain supported for compatibility.
-- `json_session_invoke::JsonSessionInvokeAdapter::registerFunction(...)`: also supports plain stateless function registration directly, so one session adapter can host both stateless tools and stateful object lifecycles.
-- `json_session_invoke::JsonSessionInvokeAdapter::registerFunction(...)` intentionally rejects member function pointers; stateful member methods must be registered through `stateful<T>(...).method(...)` so the session boundary stays explicit.
-- `json_session_invoke::JsonSessionInvokeAdapter::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::registerFunction(...)`: also supports plain stateless function registration directly, so one session adapter can host both stateless tools and stateful object lifecycles.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::registerFunction(...)` intentionally rejects member function pointers; stateful member methods must be registered through `stateful<T>(...).method(...)` so the session boundary stays explicit.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
 - If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `setStatefulDefaults(...)` disables `auto_register_destroy`.
-- `json_session_invoke::JsonSessionInvokeAdapter::setStatefulDefaults(...)`: adapter-level defaults for auto-generated stateful helpers, including `auto_register_destroy` and the default destroy description text.
-- `json_session_invoke::JsonSessionInvokeAdapter::registerDestroy<T>()`: when called without a name, defaults to `destroy_<object_type>` if the session object type was explicitly named during factory registration, otherwise falls back to `destroy_object`.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::setStatefulDefaults(...)`: adapter-level defaults for auto-generated stateful helpers, including `auto_register_destroy` and the default destroy description text.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::registerDestroy<T>()`: when called without a name, defaults to `destroy_<object_type>` if the session object type was explicitly named during factory registration, otherwise falls back to `destroy_object`.
 - `json_invoke::json_traits<T>`: add custom JSON bindings for domain types.
 - `func_registry::schema_traits<T>`: optionally describe nested object fields so exported tool schemas can include custom object properties and container item shapes.
 - See `SCHEMA_TRAITS.md` for dedicated authoring guidance and LLM-oriented generation rules for `schema_traits<T>`.
@@ -156,10 +159,10 @@ Supported request shapes
 
 Stateful flows use the same request envelope through `json_session_invoke`. A create tool can return a handle like `{ "object_id": "obj_1", "object_type": "counter" }`, and later tools can accept that handle as a regular argument.
 
-You can also mix stateless and stateful tools on the same `JsonSessionInvokeAdapter` instance:
+You can also mix stateless and stateful tools on the same `JsonSessionInvokeAdapterThreadSafe` instance:
 
 ```cpp
-json_session_invoke::JsonSessionInvokeAdapter adapter;
+json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
 
 adapter.registerFunction(
   "sum",
@@ -174,6 +177,8 @@ adapter
 ```
 
 Stateful tools infer execution semantics automatically: factories and destroy tools export `mutating`, non-const methods export `mutating`, and const methods export `read_only`.
+
+`JsonSessionInvokeAdapterUnsafe` is only appropriate when one thread exclusively owns the adapter for its full lifetime and every registration/invocation path is funneled through that same thread. If an adapter instance may be shared across threads, use `JsonSessionInvokeAdapterThreadSafe`.
 
 ```json
 {
