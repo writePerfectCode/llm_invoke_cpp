@@ -169,7 +169,7 @@ MCP stdio demo
 - Build `mcp_stdio_server_demo` when you want a real process that an MCP host can launch over stdio.
 - The demo server registers `sum`, `echo_text`, `create_counter`, `counter_add`, `counter_value`, and `destroy_counter`.
 - The process writes only framed MCP responses to stdout; fatal startup errors go to stderr.
-- `examples/mcp_stdio/test_mcp.ps1` sends a minimal initialize/list/call sequence to the demo executable so you can smoke-test the server without writing MCP frames by hand.
+- `examples/mcp_stdio/test_mcp.ps1` now runs a fuller smoke test against the demo executable: initialize, tools/list, one stateless `sum` call, then a stateful `create_counter -> counter_add -> counter_value -> destroy_counter` flow.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
 - If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `setStatefulDefaults(...)` disables `auto_register_destroy`.
