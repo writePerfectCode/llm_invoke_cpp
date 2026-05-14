@@ -2,7 +2,7 @@
 
 `llm_invoke_cpp` is a header-only C++ library for exposing native C++ functions as LLM-callable tools.
 
-It is split into seven public modules:
+It is split into eight public modules:
 
 - `include/func_registry`: dependency-free function registration, concise function summaries, and runtime dispatch.
 - `include/tool_meta`: optional tool-facing metadata and tool spec export helpers built on top of the registry.
@@ -11,6 +11,7 @@ It is split into seven public modules:
 - `include/json_session_invoke`: higher-level session/runtime APIs built on top of `json_invoke` for stateful create/call/destroy flows.
 - `include/task_scheduler`: task classification and scheduling helpers built on top of `json_session_invoke`.
 - `include/runtime`: protocol-neutral runtime facade built on top of `task_scheduler` for normalized tool listing and unary invocation.
+- `include/mcp`: MCP-specific adapters built on top of `runtime` for protocol-facing transports such as stdio.
 
 Project layout
 
@@ -33,7 +34,9 @@ Project layout
 - `include/task_scheduler/task_scheduler_facade.hpp`: recommended facade entry point for callers that want to submit one JSON request and let task_scheduler hide classification, queueing, and invocation details.
 - `include/task_scheduler/task_scheduler.hpp`: scheduler-side task abstractions, including a minimal `ITaskScheduler` interface and a keyed scheduler that enforces session-wide and per-object exclusivity.
 - `include/runtime/runtime_facade.hpp`: protocol-neutral facade that projects exported tool schemas into normalized descriptors and turns scheduler-backed JSON requests into normalized invoke results.
+- `include/mcp/mcp_stdio_server.hpp`: minimal MCP stdio server that handles JSON-RPC framing plus `initialize`, `ping`, `tools/list`, and `tools/call` on top of the runtime facade.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
+- `examples/mcp_stdio/mcp_stdio_server_demo.cpp`: standalone MCP stdio server process that exposes demo tools and can be launched directly by an MCP host.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.
 - `examples/json_tracing/json_tracing_demo.cpp`: tracing example for invoke and object lifecycle events.
@@ -120,6 +123,7 @@ target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_invoke)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_session_invoke)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::task_scheduler)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::runtime)
+target_link_libraries(your_target PRIVATE llm_invoke_cpp::mcp)
 ```
 
 API notes
@@ -157,6 +161,15 @@ API notes
 - `task_scheduler::KeyedTaskScheduler`: fixed-worker scheduler implementation that admits the next runnable task from an internal queue, allows `FreeReadOnly` work to run concurrently, serializes `ObjectExclusive` by `object_id`, serializes `FactoryLane` by `object_type`, serializes `ToolExclusive` by `tool_name`, and treats `SessionBarrier` as a stop-the-world session-wide exclusive operation.
 - `runtime::RuntimeFacadeThreadSafe`: protocol-neutral entry point above `task_scheduler`; `listTools()` returns normalized tool descriptors, `submitInvoke(...)` schedules one unary call and returns `std::future<runtime::InvokeResult>`, and `invoke(...)` gives the same normalized result synchronously.
 - `runtime::InvokeResult`: normalized invoke envelope with `ok`, `value`, optional `error`, and the original `raw_response`; classification-time failures such as unknown tools are converted into the same error shape instead of leaking exceptions to protocol adapters.
+- `mcp::McpStdioServerThreadSafe`: thin MCP adapter over `runtime::RuntimeFacadeThreadSafe`; it reads and writes `Content-Length` framed JSON-RPC messages and serves `initialize`, `ping`, `tools/list`, and `tools/call`.
+- `mcp::McpStdioServerThreadSafe::handleMessage(...)`: useful when you want protocol handling without a real stdio loop, for example in tests or when embedding the MCP adapter into another transport shim.
+
+MCP stdio demo
+
+- Build `mcp_stdio_server_demo` when you want a real process that an MCP host can launch over stdio.
+- The demo server registers `sum`, `echo_text`, `create_counter`, `counter_add`, `counter_value`, and `destroy_counter`.
+- The process writes only framed MCP responses to stdout; fatal startup errors go to stderr.
+- `examples/mcp_stdio/test_mcp.ps1` sends a minimal initialize/list/call sequence to the demo executable so you can smoke-test the server without writing MCP frames by hand.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
 - If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `setStatefulDefaults(...)` disables `auto_register_destroy`.
@@ -221,6 +234,8 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 .\build\func_registry_demo.exe
+.\build\mcp_stdio_server_demo.exe
+.\examples\mcp_stdio\test_mcp.ps1
 .\build\json_invoke_demo.exe
 .\build\json_stateful_demo.exe
 .\build\json_tracing_demo.exe

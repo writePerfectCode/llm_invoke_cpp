@@ -59,6 +59,14 @@ target_link_libraries(llm_invoke_cpp_runtime
         llm_invoke_cpp::task_scheduler
 )
 
+add_library(llm_invoke_cpp_mcp INTERFACE)
+add_library(llm_invoke_cpp::mcp ALIAS llm_invoke_cpp_mcp)
+
+target_link_libraries(llm_invoke_cpp_mcp
+    INTERFACE
+        llm_invoke_cpp::runtime
+)
+
 if(BUILD_TESTING)
     FetchContent_Declare(
         doctest
@@ -73,6 +81,7 @@ if(BUILD_TESTING)
         tests/func_registry_tests.cpp
         tests/json_invoke_tests.cpp
         tests/json_stateful_tests.cpp
+        tests/mcp_stdio_tests.cpp
         tests/runtime_tests.cpp
         tests/task_scheduler_tests.cpp
     )
@@ -92,6 +101,9 @@ endif()
 if(LLM_INVOKE_CPP_BUILD_EXAMPLES)
     add_executable(func_registry_demo examples/func_registry/func_registry_demo.cpp)
     target_link_libraries(func_registry_demo PRIVATE llm_invoke_cpp::func_registry)
+
+    add_executable(mcp_stdio_server_demo examples/mcp_stdio/mcp_stdio_server_demo.cpp)
+    target_link_libraries(mcp_stdio_server_demo PRIVATE llm_invoke_cpp::mcp)
 
     add_executable(json_invoke_demo examples/json_invoke/json_invoke_demo.cpp)
     target_link_libraries(json_invoke_demo PRIVATE llm_invoke_cpp::json_invoke)
