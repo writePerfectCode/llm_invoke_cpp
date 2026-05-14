@@ -51,6 +51,14 @@ target_link_libraries(llm_invoke_cpp_task_scheduler
         llm_invoke_cpp::json_session_invoke
 )
 
+add_library(llm_invoke_cpp_runtime INTERFACE)
+add_library(llm_invoke_cpp::runtime ALIAS llm_invoke_cpp_runtime)
+
+target_link_libraries(llm_invoke_cpp_runtime
+    INTERFACE
+        llm_invoke_cpp::task_scheduler
+)
+
 if(BUILD_TESTING)
     FetchContent_Declare(
         doctest
@@ -65,6 +73,7 @@ if(BUILD_TESTING)
         tests/func_registry_tests.cpp
         tests/json_invoke_tests.cpp
         tests/json_stateful_tests.cpp
+        tests/runtime_tests.cpp
         tests/task_scheduler_tests.cpp
     )
 

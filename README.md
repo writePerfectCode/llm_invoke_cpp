@@ -2,7 +2,7 @@
 
 `llm_invoke_cpp` is a header-only C++ library for exposing native C++ functions as LLM-callable tools.
 
-It is split into six public modules:
+It is split into seven public modules:
 
 - `include/func_registry`: dependency-free function registration, concise function summaries, and runtime dispatch.
 - `include/tool_meta`: optional tool-facing metadata and tool spec export helpers built on top of the registry.
@@ -10,6 +10,7 @@ It is split into six public modules:
 - `include/json_invoke`: JSON-based invocation on top of the registry, intended for LLM and agent integrations.
 - `include/json_session_invoke`: higher-level session/runtime APIs built on top of `json_invoke` for stateful create/call/destroy flows.
 - `include/task_scheduler`: task classification and scheduling helpers built on top of `json_session_invoke`.
+- `include/runtime`: protocol-neutral runtime facade built on top of `task_scheduler` for normalized tool listing and unary invocation.
 
 Project layout
 
@@ -31,6 +32,7 @@ Project layout
 - `include/task_scheduler/request_classifier.hpp`: readonly request classification helpers that turn session tool metadata into scheduling categories and object keys.
 - `include/task_scheduler/task_scheduler_facade.hpp`: recommended facade entry point for callers that want to submit one JSON request and let task_scheduler hide classification, queueing, and invocation details.
 - `include/task_scheduler/task_scheduler.hpp`: scheduler-side task abstractions, including a minimal `ITaskScheduler` interface and a keyed scheduler that enforces session-wide and per-object exclusivity.
+- `include/runtime/runtime_facade.hpp`: protocol-neutral facade that projects exported tool schemas into normalized descriptors and turns scheduler-backed JSON requests into normalized invoke results.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.
@@ -117,6 +119,7 @@ target_link_libraries(your_target PRIVATE llm_invoke_cpp::func_registry)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_invoke)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_session_invoke)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::task_scheduler)
+target_link_libraries(your_target PRIVATE llm_invoke_cpp::runtime)
 ```
 
 API notes
@@ -152,6 +155,8 @@ API notes
 - `task_scheduler::TaskSchedulerFacadeThreadSafe`: recommended one-object facade for higher-level callers; submit one JSON request with `submitRequest(...)`, while classification, keyed queueing, and invocation stay hidden behind the facade.
 - `task_scheduler::ITaskScheduler`: scheduler-side execution interface that accepts a classified `ScheduledTask` and returns a `std::future<json>` without pulling execution policy back into `json_session_invoke`.
 - `task_scheduler::KeyedTaskScheduler`: fixed-worker scheduler implementation that admits the next runnable task from an internal queue, allows `FreeReadOnly` work to run concurrently, serializes `ObjectExclusive` by `object_id`, serializes `FactoryLane` by `object_type`, serializes `ToolExclusive` by `tool_name`, and treats `SessionBarrier` as a stop-the-world session-wide exclusive operation.
+- `runtime::RuntimeFacadeThreadSafe`: protocol-neutral entry point above `task_scheduler`; `listTools()` returns normalized tool descriptors, `submitInvoke(...)` schedules one unary call and returns `std::future<runtime::InvokeResult>`, and `invoke(...)` gives the same normalized result synchronously.
+- `runtime::InvokeResult`: normalized invoke envelope with `ok`, `value`, optional `error`, and the original `raw_response`; classification-time failures such as unknown tools are converted into the same error shape instead of leaking exceptions to protocol adapters.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
 - If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `setStatefulDefaults(...)` disables `auto_register_destroy`.
