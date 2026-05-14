@@ -610,6 +610,23 @@ public:
         }
     }
 
+    std::optional<ToolExecutionSemantics> findToolExecutionSemantics(const std::string& name) const
+    {
+        if (!hasRegisteredFunction(name))
+        {
+            return std::nullopt;
+        }
+
+        std::shared_lock<MutexType> lock(state_mutex_);
+        const auto it = tool_execution_semantics_.find(name);
+        if (it != tool_execution_semantics_.end())
+        {
+            return it->second;
+        }
+
+        return ToolExecutionSemantics::unknown;
+    }
+
     bool canConvertFromJson(std::type_index expected_type) const
     {
         return json_type_registry_.canRead(expected_type);

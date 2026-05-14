@@ -178,6 +178,73 @@ TEST_CASE("json_session_invoke forwards explicit execution semantics for wrapped
     CHECK(log == "!");
 }
 
+TEST_CASE("json_session_invoke exposes readonly tool metadata for scheduler classification")
+{
+    using ToolSchedulingScope = json_session_invoke::JsonSessionInvokeAdapterThreadSafe::ToolSchedulingScope;
+    using ToolStatefulKind = json_session_invoke::JsonSessionInvokeAdapterThreadSafe::ToolStatefulKind;
+
+    json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;
+
+    adapter.registerFunction(
+        "sum",
+        json_invoke::readOnly([](int left, int right) { return left + right; }),
+        func_registry::FunctionMetadata{{"left", "right"}, "Add two integers without session state."});
+
+    adapter.registerFunction(
+        "echo",
+        [](std::string text) { return text; },
+        func_registry::FunctionMetadata{{"text"}, "Echo text with unknown execution semantics."});
+
+    adapter
+        .stateful<Counter>("counter")
+        .create(
+            "build_counter",
+            [](int initial) { return std::make_shared<Counter>(initial); },
+            func_registry::FunctionMetadata{{"initial"}, "Create one counter for metadata tests."})
+        .method(
+            "counter_read",
+            &Counter::current,
+            func_registry::FunctionMetadata{{"counter_ref"}, "Read one counter using a custom handle parameter name."})
+        .destroy(
+            "dispose_counter",
+            func_registry::FunctionMetadata{{"counter_ref"}, "Dispose one counter using a custom handle parameter name."});
+
+    const auto stateless_read_only = adapter.findToolMetadata("sum");
+    REQUIRE(stateless_read_only.has_value());
+    CHECK(stateless_read_only->tool_name == "sum");
+    CHECK(stateless_read_only->execution_semantics == json_invoke::ToolExecutionSemantics::read_only);
+    CHECK(stateless_read_only->stateful_kind == ToolStatefulKind::none);
+    CHECK(stateless_read_only->handle_parameter_name.empty());
+
+    const auto stateless_unknown = adapter.findToolMetadata("echo");
+    REQUIRE(stateless_unknown.has_value());
+    CHECK(stateless_unknown->execution_semantics == json_invoke::ToolExecutionSemantics::unknown);
+    CHECK(stateless_unknown->stateful_kind == ToolStatefulKind::none);
+
+    const auto factory = adapter.findToolMetadata("build_counter");
+    REQUIRE(factory.has_value());
+    CHECK(factory->execution_semantics == json_invoke::ToolExecutionSemantics::mutating);
+    CHECK(factory->scheduling_scope == ToolSchedulingScope::factory_lane);
+    CHECK(factory->stateful_kind == ToolStatefulKind::factory);
+    CHECK(factory->handle_parameter_name.empty());
+
+    const auto method = adapter.findToolMetadata("counter_read");
+    REQUIRE(method.has_value());
+    CHECK(method->execution_semantics == json_invoke::ToolExecutionSemantics::read_only);
+    CHECK(method->scheduling_scope == ToolSchedulingScope::object_lane);
+    CHECK(method->stateful_kind == ToolStatefulKind::method);
+    CHECK(method->handle_parameter_name == "counter_ref");
+
+    const auto destroy = adapter.findToolMetadata("dispose_counter");
+    REQUIRE(destroy.has_value());
+    CHECK(destroy->execution_semantics == json_invoke::ToolExecutionSemantics::mutating);
+    CHECK(destroy->scheduling_scope == ToolSchedulingScope::object_lane);
+    CHECK(destroy->stateful_kind == ToolStatefulKind::destroy);
+    CHECK(destroy->handle_parameter_name == "counter_ref");
+
+    CHECK_FALSE(adapter.findToolMetadata("missing_tool").has_value());
+}
+
 TEST_CASE("json_session_invoke emits trace events for object create and destroy")
 {
     json_session_invoke::JsonSessionInvokeAdapterThreadSafe adapter;

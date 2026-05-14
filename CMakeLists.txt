@@ -43,6 +43,14 @@ target_link_libraries(llm_invoke_cpp_json_session_invoke
         llm_invoke_cpp::json_invoke
 )
 
+add_library(llm_invoke_cpp_task_scheduler INTERFACE)
+add_library(llm_invoke_cpp::task_scheduler ALIAS llm_invoke_cpp_task_scheduler)
+
+target_link_libraries(llm_invoke_cpp_task_scheduler
+    INTERFACE
+        llm_invoke_cpp::json_session_invoke
+)
+
 if(BUILD_TESTING)
     FetchContent_Declare(
         doctest
@@ -57,6 +65,7 @@ if(BUILD_TESTING)
         tests/func_registry_tests.cpp
         tests/json_invoke_tests.cpp
         tests/json_stateful_tests.cpp
+        tests/task_scheduler_tests.cpp
     )
 
     target_compile_features(llm_invoke_cpp_tests PRIVATE cxx_std_23)
@@ -65,7 +74,7 @@ if(BUILD_TESTING)
     target_link_libraries(llm_invoke_cpp_tests
         PRIVATE
             doctest::doctest
-            llm_invoke_cpp::json_invoke
+            llm_invoke_cpp::task_scheduler
     )
 
     add_test(NAME llm_invoke_cpp_tests COMMAND llm_invoke_cpp_tests)
@@ -86,4 +95,7 @@ if(LLM_INVOKE_CPP_BUILD_EXAMPLES)
 
     add_executable(trace_recorder_demo examples/trace_recorder/trace_recorder_demo.cpp)
     target_link_libraries(trace_recorder_demo PRIVATE llm_invoke_cpp::json_invoke)
+
+    add_executable(task_scheduler_demo examples/task_scheduler/task_scheduler_demo.cpp)
+    target_link_libraries(task_scheduler_demo PRIVATE llm_invoke_cpp::task_scheduler)
 endif()

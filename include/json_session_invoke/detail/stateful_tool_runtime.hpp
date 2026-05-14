@@ -4,6 +4,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <shared_mutex>
 #include <string>
 #include <type_traits>
 #include <typeindex>
@@ -44,6 +46,7 @@ template<bool EnableThreadSafety>
 class BasicStatefulRuntime {
 public:
     using StatefulObjectStore = json_session_invoke::detail::BasicStatefulObjectStore<EnableThreadSafety>;
+    using MutexType = std::conditional_t<EnableThreadSafety, std::shared_mutex, func_registry::NullSharedMutex>;
 
     void setTraceDispatcher(std::shared_ptr<json_invoke::TraceDispatcher> trace_dispatcher)
     {
@@ -71,6 +74,18 @@ public:
         std::string factory_tool_name;
         std::string handle_parameter_name{std::string(default_handle_parameter_name)};
     };
+
+    std::optional<StatefulToolMetadata> findToolMetadata(const std::string& tool_name) const
+    {
+        std::shared_lock<MutexType> lock(metadata_mutex_);
+        const auto it = stateful_tools_.find(tool_name);
+        if (it == stateful_tools_.end())
+        {
+            return std::nullopt;
+        }
+
+        return it->second;
+    }
 
     template<typename T, typename Fn, typename RegisterFunctionFn>
     void registerFactory(
@@ -119,6 +134,8 @@ public:
             metadata.param_names = {std::string(default_handle_parameter_name)};
         }
 
+        const std::string handle_parameter_name = metadata.param_names.front();
+
         std::forward<RegisterFunctionFn>(register_function)(
             destroy_tool_name,
             [this](json_session_invoke::ObjectHandle handle) {
@@ -127,7 +144,7 @@ public:
             std::move(metadata));
 
         const std::string registered_object_type_name = object_store_.template objectTypeName<T>();
-        recordStatefulDestroy<T>(destroy_tool_name, registered_object_type_name);
+        recordStatefulDestroy<T>(destroy_tool_name, registered_object_type_name, handle_parameter_name);
     }
 
     template<typename Fn, typename RegisterFunctionFn, typename FromJsonFn>
@@ -155,6 +172,7 @@ public:
                 std::make_index_sequence<Traits::arity - 1>{}),
             std::move(metadata));
 
+        std::unique_lock<MutexType> lock(metadata_mutex_);
         method_tools_by_object_type_[typeid(ObjectType)].push_back(method_tool_name);
 
         StatefulToolMetadata tool_metadata;
@@ -176,6 +194,7 @@ public:
 
     json_invoke::json applyToolSummaryOverlay(const std::string& tool_name, json_invoke::json summary) const
     {
+        std::shared_lock<MutexType> lock(metadata_mutex_);
         const auto it = stateful_tools_.find(tool_name);
         if (it == stateful_tools_.end())
         {
@@ -198,6 +217,7 @@ public:
 
     json_invoke::json applyToolSchemaOverlay(const std::string& tool_name, json_invoke::json schema) const
     {
+        std::shared_lock<MutexType> lock(metadata_mutex_);
         const auto it = stateful_tools_.find(tool_name);
         if (it == stateful_tools_.end())
         {
@@ -357,6 +377,7 @@ private:
     template<typename T>
     void recordStatefulFactory(const std::string& factory_tool_name, const std::string& registered_object_type_name)
     {
+        std::unique_lock<MutexType> lock(metadata_mutex_);
         factory_tool_by_object_type_[typeid(T)] = factory_tool_name;
 
         StatefulToolMetadata metadata;
@@ -370,8 +391,12 @@ private:
     }
 
     template<typename T>
-    void recordStatefulDestroy(const std::string& destroy_tool_name, const std::string& registered_object_type_name)
+    void recordStatefulDestroy(
+        const std::string& destroy_tool_name,
+        const std::string& registered_object_type_name,
+        std::string handle_parameter_name)
     {
+        std::unique_lock<MutexType> lock(metadata_mutex_);
         destroy_tool_by_object_type_[typeid(T)] = destroy_tool_name;
 
         StatefulToolMetadata metadata;
@@ -380,7 +405,7 @@ private:
         metadata.object_cpp_type = typeid(T);
         metadata.object_type_name = registered_object_type_name;
         metadata.factory_tool_name = factoryToolName(typeid(T));
-        metadata.handle_parameter_name = std::string(default_handle_parameter_name);
+        metadata.handle_parameter_name = std::move(handle_parameter_name);
         stateful_tools_[destroy_tool_name] = std::move(metadata);
         refreshRelatedStatefulTools(typeid(T));
     }
@@ -495,6 +520,7 @@ private:
         return schema;
     }
 
+    mutable MutexType metadata_mutex_{};
     StatefulObjectStore object_store_{};
     // Per-tool stateful metadata used when overlaying summaries and JSON schemas.
     std::unordered_map<std::string, StatefulToolMetadata> stateful_tools_;

@@ -2,10 +2,12 @@
 
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <typeindex>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -24,6 +26,31 @@ class BasicJsonSessionInvokeAdapter {
 public:
     using UnderlyingAdapter = json_invoke::BasicJsonInvokeAdapter<EnableThreadSafety>;
     using MapType = typename UnderlyingAdapter::MapType;
+
+    enum class ToolStatefulKind {
+        none,
+        factory,
+        method,
+        destroy,
+    };
+
+    enum class ToolSchedulingScope {
+        infer_default,
+        free_read_only,
+        object_lane,
+        factory_lane,
+        tool_exclusive,
+        session_barrier,
+    };
+
+    struct ToolMetadataView {
+        std::string tool_name;
+        json_invoke::ToolExecutionSemantics execution_semantics{json_invoke::ToolExecutionSemantics::unknown};
+        ToolSchedulingScope scheduling_scope{ToolSchedulingScope::infer_default};
+        ToolStatefulKind stateful_kind{ToolStatefulKind::none};
+        std::string object_type_name;
+        std::string handle_parameter_name;
+    };
 
     struct StatefulDefaults {
         bool auto_register_destroy{true};
@@ -81,13 +108,20 @@ public:
         template<typename Fn>
         StatefulRegistrationBuilder& create(const std::string& factory_tool_name, Fn&& fn)
         {
-            adapter_.template registerFactory<T>(
+            return create(factory_tool_name, std::forward<Fn>(fn), ToolSchedulingScope::factory_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(
+            const std::string& factory_tool_name,
+            Fn&& fn,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerFactoryWithMetadata(
                 factory_tool_name,
                 std::forward<Fn>(fn),
-                configured_object_type_name_,
-                options_);
-            created_ = true;
-            return *this;
+                func_registry::FunctionMetadata{},
+                scheduling_scope);
         }
 
         template<typename Fn>
@@ -96,55 +130,114 @@ public:
             Fn&& fn,
             func_registry::FunctionMetadata metadata)
         {
-            adapter_.template registerFactory<T>(
+            return create(factory_tool_name, std::forward<Fn>(fn), std::move(metadata), ToolSchedulingScope::factory_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(
+            const std::string& factory_tool_name,
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerFactoryWithMetadata(
                 factory_tool_name,
                 std::forward<Fn>(fn),
                 std::move(metadata),
-                configured_object_type_name_,
-                options_);
-            created_ = true;
-            return *this;
+                scheduling_scope);
         }
 
         template<typename Fn>
         StatefulRegistrationBuilder& create(const std::string& factory_tool_name, Fn&& fn, std::string description)
         {
-            adapter_.template registerFactory<T>(
+            return create(factory_tool_name, std::forward<Fn>(fn), std::move(description), ToolSchedulingScope::factory_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(
+            const std::string& factory_tool_name,
+            Fn&& fn,
+            std::string description,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerFactoryWithMetadata(
                 factory_tool_name,
                 std::forward<Fn>(fn),
-                std::move(description),
-                options_);
-            created_ = true;
-            return *this;
+                func_registry::FunctionMetadata{{}, std::move(description)},
+                scheduling_scope);
         }
 
         template<typename Fn>
         StatefulRegistrationBuilder& create(Fn&& fn)
         {
-            return create(defaultFactoryToolName(), std::forward<Fn>(fn));
+            return create(defaultFactoryToolName(), std::forward<Fn>(fn), ToolSchedulingScope::factory_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(Fn&& fn, ToolSchedulingScope scheduling_scope)
+        {
+            return create(defaultFactoryToolName(), std::forward<Fn>(fn), scheduling_scope);
         }
 
         template<typename Fn>
         StatefulRegistrationBuilder& create(Fn&& fn, func_registry::FunctionMetadata metadata)
         {
-            return create(defaultFactoryToolName(), std::forward<Fn>(fn), std::move(metadata));
+            return create(
+                defaultFactoryToolName(),
+                std::forward<Fn>(fn),
+                std::move(metadata),
+                ToolSchedulingScope::factory_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return create(defaultFactoryToolName(), std::forward<Fn>(fn), std::move(metadata), scheduling_scope);
         }
 
         template<typename Fn>
         StatefulRegistrationBuilder& create(Fn&& fn, std::string description)
         {
-            return create(defaultFactoryToolName(), std::forward<Fn>(fn), std::move(description));
+            return create(
+                defaultFactoryToolName(),
+                std::forward<Fn>(fn),
+                std::move(description),
+                ToolSchedulingScope::factory_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& create(
+            Fn&& fn,
+            std::string description,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return create(defaultFactoryToolName(), std::forward<Fn>(fn), std::move(description), scheduling_scope);
         }
 
         template<typename Fn>
         StatefulRegistrationBuilder& method(const std::string& method_tool_name, Fn&& fn)
         {
-            validateMethodType<Fn>();
-            adapter_.template registerStatefulMethod<T>(
+            return registerMethodWithMetadata(
                 method_tool_name,
                 std::forward<Fn>(fn),
-                makeDefaultMemberMetadata<Fn>(std::string{}));
-            return *this;
+                makeDefaultMemberMetadata<Fn>(std::string{}),
+                ToolSchedulingScope::object_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& method(
+            const std::string& method_tool_name,
+            Fn&& fn,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerMethodWithMetadata(
+                method_tool_name,
+                std::forward<Fn>(fn),
+                makeDefaultMemberMetadata<Fn>(std::string{}),
+                scheduling_scope);
         }
 
         template<typename Fn>
@@ -153,50 +246,103 @@ public:
             Fn&& fn,
             func_registry::FunctionMetadata metadata)
         {
-            validateMethodType<Fn>();
-            adapter_.template registerStatefulMethod<T>(method_tool_name, std::forward<Fn>(fn), std::move(metadata));
-            return *this;
+            return method(method_tool_name, std::forward<Fn>(fn), std::move(metadata), ToolSchedulingScope::object_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& method(
+            const std::string& method_tool_name,
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerMethodWithMetadata(
+                method_tool_name,
+                std::forward<Fn>(fn),
+                std::move(metadata),
+                scheduling_scope);
         }
 
         template<typename Fn>
         StatefulRegistrationBuilder& method(const std::string& method_tool_name, Fn&& fn, std::string description)
         {
-            validateMethodType<Fn>();
-            adapter_.template registerStatefulMethod<T>(
+            return method(method_tool_name, std::forward<Fn>(fn), std::move(description), ToolSchedulingScope::object_lane);
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& method(
+            const std::string& method_tool_name,
+            Fn&& fn,
+            std::string description,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerMethodWithMetadata(
                 method_tool_name,
                 std::forward<Fn>(fn),
-                makeDefaultMemberMetadata<Fn>(std::move(description)));
-            return *this;
+                makeDefaultMemberMetadata<Fn>(std::move(description)),
+                scheduling_scope);
         }
 
         StatefulRegistrationBuilder& destroy()
         {
-            adapter_.template registerDestroy<T>(defaultDestroyToolName());
-            destroy_registered_ = true;
-            return *this;
+            return destroy(defaultDestroyToolName(), ToolSchedulingScope::object_lane);
+        }
+
+        StatefulRegistrationBuilder& destroy(ToolSchedulingScope scheduling_scope)
+        {
+            return destroy(defaultDestroyToolName(), scheduling_scope);
         }
 
         StatefulRegistrationBuilder& destroy(const std::string& destroy_tool_name)
         {
-            adapter_.template registerDestroy<T>(destroy_tool_name);
-            destroy_registered_ = true;
-            return *this;
+            return destroy(destroy_tool_name, ToolSchedulingScope::object_lane);
+        }
+
+        StatefulRegistrationBuilder& destroy(
+            const std::string& destroy_tool_name,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerDestroyWithMetadata(
+                destroy_tool_name,
+                BasicJsonSessionInvokeAdapter::makeDestroyMetadata(adapter_.defaultDestroyDescription()),
+                scheduling_scope);
         }
 
         StatefulRegistrationBuilder& destroy(
             const std::string& destroy_tool_name,
             func_registry::FunctionMetadata metadata)
         {
-            adapter_.template registerDestroy<T>(destroy_tool_name, std::move(metadata));
-            destroy_registered_ = true;
-            return *this;
+            return destroy(
+                destroy_tool_name,
+                std::move(metadata),
+                ToolSchedulingScope::object_lane);
+        }
+
+        StatefulRegistrationBuilder& destroy(
+            const std::string& destroy_tool_name,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerDestroyWithMetadata(destroy_tool_name, std::move(metadata), scheduling_scope);
         }
 
         StatefulRegistrationBuilder& destroy(const std::string& destroy_tool_name, std::string description)
         {
-            adapter_.template registerDestroy<T>(destroy_tool_name, std::move(description));
-            destroy_registered_ = true;
-            return *this;
+            return destroy(
+                destroy_tool_name,
+                std::move(description),
+                ToolSchedulingScope::object_lane);
+        }
+
+        StatefulRegistrationBuilder& destroy(
+            const std::string& destroy_tool_name,
+            std::string description,
+            ToolSchedulingScope scheduling_scope)
+        {
+            return registerDestroyWithMetadata(
+                destroy_tool_name,
+                BasicJsonSessionInvokeAdapter::makeDestroyMetadata(std::move(description)),
+                scheduling_scope);
         }
 
         StatefulRegistrationBuilder& options(ObjectOptions options)
@@ -216,6 +362,50 @@ public:
         }
 
     private:
+        template<typename Fn>
+        StatefulRegistrationBuilder& registerFactoryWithMetadata(
+            const std::string& factory_tool_name,
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            adapter_.template registerFactory<T>(
+                factory_tool_name,
+                std::forward<Fn>(fn),
+                std::move(metadata),
+                configured_object_type_name_,
+                options_,
+                scheduling_scope);
+            created_ = true;
+            return *this;
+        }
+
+        template<typename Fn>
+        StatefulRegistrationBuilder& registerMethodWithMetadata(
+            const std::string& method_tool_name,
+            Fn&& fn,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            validateMethodType<Fn>();
+            adapter_.template registerStatefulMethod<T>(
+                method_tool_name,
+                std::forward<Fn>(fn),
+                std::move(metadata),
+                scheduling_scope);
+            return *this;
+        }
+
+        StatefulRegistrationBuilder& registerDestroyWithMetadata(
+            const std::string& destroy_tool_name,
+            func_registry::FunctionMetadata metadata,
+            ToolSchedulingScope scheduling_scope)
+        {
+            adapter_.template registerDestroy<T>(destroy_tool_name, std::move(metadata), scheduling_scope);
+            destroy_registered_ = true;
+            return *this;
+        }
+
         void ensureDefaultDestroyRegistered() noexcept
         {
             if (!active_ || !created_ || destroy_registered_ || !adapter_.stateful_defaults_.auto_register_destroy)
@@ -232,7 +422,10 @@ public:
 
             try
             {
-                adapter_.template registerDestroy<T>(destroy_tool_name);
+                registerDestroyWithMetadata(
+                    destroy_tool_name,
+                    BasicJsonSessionInvokeAdapter::makeDestroyMetadata(adapter_.defaultDestroyDescription()),
+                    ToolSchedulingScope::object_lane);
             }
             catch (...)
             {
@@ -242,16 +435,17 @@ public:
         template<typename Fn>
         static void validateMethodType()
         {
-            static_assert(
-                std::is_member_function_pointer_v<std::decay_t<Fn>>,
-                "stateful<T>().method(...) requires a member function pointer");
-
             using Traits = json_session_invoke::detail::callable_traits_t<Fn>;
+
+            static_assert(
+                Traits::arity >= 1,
+                "stateful<T>().method(...) requires a callable whose first parameter is the stateful object");
+
             using ObjectArg = typename Traits::template arg<0>;
             using ObjectType = std::remove_cv_t<std::remove_reference_t<ObjectArg>>;
             static_assert(
                 std::is_same_v<ObjectType, T>,
-                "stateful<T>().method(...) requires a member function belonging to T");
+                "stateful<T>().method(...) requires a callable whose first parameter belongs to T");
         }
 
         std::string defaultFactoryToolName() const
@@ -316,81 +510,145 @@ public:
     template<typename Fn>
     void registerFunction(const std::string& tool_name, Fn&& fn)
     {
-        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
-        {
-            throwMemberFunctionRegistrationError();
-            return;
-        }
+        registerFunction(tool_name, std::forward<Fn>(fn), ToolSchedulingScope::infer_default);
+    }
 
-        invoke_adapter_.registerFunction(tool_name, std::forward<Fn>(fn));
+    template<typename Fn>
+    void registerFunction(const std::string& tool_name, Fn&& fn, ToolSchedulingScope scheduling_scope)
+    {
+        registerStatelessFunction(
+            tool_name,
+            std::forward<Fn>(fn),
+            scheduling_scope,
+            [this, &tool_name](auto&& callable) {
+                invoke_adapter_.registerFunction(tool_name, std::forward<decltype(callable)>(callable));
+            });
     }
 
     template<typename Fn>
     void registerFunction(const std::string& tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
-        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
-        {
-            static_cast<void>(tool_name);
-            static_cast<void>(metadata);
-            throwMemberFunctionRegistrationError();
-            return;
-        }
+        registerFunction(tool_name, std::forward<Fn>(fn), std::move(metadata), ToolSchedulingScope::infer_default);
+    }
 
-        invoke_adapter_.registerFunction(tool_name, std::forward<Fn>(fn), std::move(metadata));
+    template<typename Fn>
+    void registerFunction(
+        const std::string& tool_name,
+        Fn&& fn,
+        func_registry::FunctionMetadata metadata,
+        ToolSchedulingScope scheduling_scope)
+    {
+        registerStatelessFunction(
+            tool_name,
+            std::forward<Fn>(fn),
+            scheduling_scope,
+            [this, &tool_name, metadata = std::move(metadata)](auto&& callable) mutable {
+                invoke_adapter_.registerFunction(tool_name, std::forward<decltype(callable)>(callable), std::move(metadata));
+            });
     }
 
     template<typename Fn>
     void registerFunction(const std::string& tool_name, Fn&& fn, std::string description)
     {
-        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
-        {
-            static_cast<void>(tool_name);
-            static_cast<void>(description);
-            throwMemberFunctionRegistrationError();
-            return;
-        }
+        registerFunction(tool_name, std::forward<Fn>(fn), std::move(description), ToolSchedulingScope::infer_default);
+    }
 
-        invoke_adapter_.registerFunction(tool_name, std::forward<Fn>(fn), std::move(description));
+    template<typename Fn>
+    void registerFunction(
+        const std::string& tool_name,
+        Fn&& fn,
+        std::string description,
+        ToolSchedulingScope scheduling_scope)
+    {
+        registerStatelessFunction(
+            tool_name,
+            std::forward<Fn>(fn),
+            scheduling_scope,
+            [this, &tool_name, description = std::move(description)](auto&& callable) mutable {
+                invoke_adapter_.registerFunction(
+                    tool_name,
+                    std::forward<decltype(callable)>(callable),
+                    std::move(description));
+            });
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& tool_name, Fn&& fn)
     {
-        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
-        {
-            throwMemberFunctionRegistrationError();
-            return;
-        }
+        registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn), ToolSchedulingScope::infer_default);
+    }
 
-        invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn));
+    template<typename R, typename... Args, typename Fn>
+    void registerFunctionAs(
+        const std::string& tool_name,
+        Fn&& fn,
+        ToolSchedulingScope scheduling_scope)
+    {
+        registerStatelessFunction(
+            tool_name,
+            std::forward<Fn>(fn),
+            scheduling_scope,
+            [this, &tool_name](auto&& callable) {
+                invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<decltype(callable)>(callable));
+            });
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
     {
-        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
-        {
-            static_cast<void>(tool_name);
-            static_cast<void>(metadata);
-            throwMemberFunctionRegistrationError();
-            return;
-        }
+        registerFunctionAs<R, Args...>(
+            tool_name,
+            std::forward<Fn>(fn),
+            std::move(metadata),
+            ToolSchedulingScope::infer_default);
+    }
 
-        invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn), std::move(metadata));
+    template<typename R, typename... Args, typename Fn>
+    void registerFunctionAs(
+        const std::string& tool_name,
+        Fn&& fn,
+        func_registry::FunctionMetadata metadata,
+        ToolSchedulingScope scheduling_scope)
+    {
+        registerStatelessFunction(
+            tool_name,
+            std::forward<Fn>(fn),
+            scheduling_scope,
+            [this, &tool_name, metadata = std::move(metadata)](auto&& callable) mutable {
+                invoke_adapter_.template registerFunctionAs<R, Args...>(
+                    tool_name,
+                    std::forward<decltype(callable)>(callable),
+                    std::move(metadata));
+            });
     }
 
     template<typename R, typename... Args, typename Fn>
     void registerFunctionAs(const std::string& tool_name, Fn&& fn, std::string description)
     {
-        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
-        {
-            static_cast<void>(tool_name);
-            static_cast<void>(description);
-            throwMemberFunctionRegistrationError();
-            return;
-        }
+        registerFunctionAs<R, Args...>(
+            tool_name,
+            std::forward<Fn>(fn),
+            std::move(description),
+            ToolSchedulingScope::infer_default);
+    }
 
-        invoke_adapter_.template registerFunctionAs<R, Args...>(tool_name, std::forward<Fn>(fn), std::move(description));
+    template<typename R, typename... Args, typename Fn>
+    void registerFunctionAs(
+        const std::string& tool_name,
+        Fn&& fn,
+        std::string description,
+        ToolSchedulingScope scheduling_scope)
+    {
+        registerStatelessFunction(
+            tool_name,
+            std::forward<Fn>(fn),
+            scheduling_scope,
+            [this, &tool_name, description = std::move(description)](auto&& callable) mutable {
+                invoke_adapter_.template registerFunctionAs<R, Args...>(
+                    tool_name,
+                    std::forward<decltype(callable)>(callable),
+                    std::move(description));
+            });
     }
 
     json invokeJson(const json& request) const
@@ -441,7 +699,56 @@ public:
         return tools;
     }
 
+    std::optional<ToolMetadataView> findToolMetadata(const std::string& tool_name) const
+    {
+        const ToolSchedulingScope scheduling_scope = findStoredToolSchedulingScope(tool_name).value_or(
+            ToolSchedulingScope::infer_default);
+        const auto stateful_metadata = runtime_.findToolMetadata(tool_name);
+        if (stateful_metadata.has_value())
+        {
+            ToolMetadataView metadata;
+            metadata.tool_name = tool_name;
+            metadata.execution_semantics = stateful_metadata->execution_semantics;
+            metadata.scheduling_scope = scheduling_scope;
+            metadata.stateful_kind = toToolStatefulKind(stateful_metadata->kind);
+            metadata.object_type_name = stateful_metadata->object_type_name;
+            if (metadata.stateful_kind == ToolStatefulKind::method || metadata.stateful_kind == ToolStatefulKind::destroy)
+            {
+                metadata.handle_parameter_name = stateful_metadata->handle_parameter_name;
+            }
+            return metadata;
+        }
+
+        const auto execution_semantics = invoke_adapter_.findToolExecutionSemantics(tool_name);
+        if (!execution_semantics.has_value())
+        {
+            return std::nullopt;
+        }
+
+        ToolMetadataView metadata;
+        metadata.tool_name = tool_name;
+        metadata.execution_semantics = *execution_semantics;
+        metadata.scheduling_scope = scheduling_scope;
+        return metadata;
+    }
+
 private:
+    static ToolStatefulKind toToolStatefulKind(
+        typename json_session_invoke::detail::BasicStatefulRuntime<EnableThreadSafety>::StatefulToolKind kind) noexcept
+    {
+        switch (kind)
+        {
+        case json_session_invoke::detail::BasicStatefulRuntime<EnableThreadSafety>::StatefulToolKind::factory:
+            return ToolStatefulKind::factory;
+        case json_session_invoke::detail::BasicStatefulRuntime<EnableThreadSafety>::StatefulToolKind::method:
+            return ToolStatefulKind::method;
+        case json_session_invoke::detail::BasicStatefulRuntime<EnableThreadSafety>::StatefulToolKind::destroy:
+            return ToolStatefulKind::destroy;
+        }
+
+        return ToolStatefulKind::none;
+    }
+
     static void emitUnsafeConstructionWarning()
     {
         if constexpr (EnableThreadSafety)
@@ -462,6 +769,51 @@ private:
         return invoke_adapter_.hasRegisteredFunction(tool_name);
     }
 
+    void storeToolSchedulingScope(const std::string& tool_name, ToolSchedulingScope scheduling_scope)
+    {
+        std::lock_guard<std::mutex> lock(tool_scheduling_scopes_mutex_);
+        if (scheduling_scope == ToolSchedulingScope::infer_default)
+        {
+            tool_scheduling_scopes_.erase(tool_name);
+            return;
+        }
+
+        tool_scheduling_scopes_[tool_name] = scheduling_scope;
+    }
+
+    template<typename Fn>
+    static void validateStatelessFunctionRegistration()
+    {
+        if constexpr (std::is_member_function_pointer_v<std::decay_t<Fn>>)
+        {
+            throwMemberFunctionRegistrationError();
+        }
+    }
+
+    template<typename Fn, typename RegisterFn>
+    void registerStatelessFunction(
+        const std::string& tool_name,
+        Fn&& fn,
+        ToolSchedulingScope scheduling_scope,
+        RegisterFn&& register_function)
+    {
+        validateStatelessFunctionRegistration<Fn>();
+        std::forward<RegisterFn>(register_function)(std::forward<Fn>(fn));
+        storeToolSchedulingScope(tool_name, scheduling_scope);
+    }
+
+    std::optional<ToolSchedulingScope> findStoredToolSchedulingScope(const std::string& tool_name) const
+    {
+        std::lock_guard<std::mutex> lock(tool_scheduling_scopes_mutex_);
+        const auto it = tool_scheduling_scopes_.find(tool_name);
+        if (it == tool_scheduling_scopes_.end())
+        {
+            return std::nullopt;
+        }
+
+        return it->second;
+    }
+
     static std::string defaultFactoryToolName(std::string_view object_type_name)
     {
         return makeDefaultSessionFactoryToolName(object_type_name);
@@ -473,71 +825,13 @@ private:
     }
 
     template<typename T, typename Fn>
-    void registerFactory(const std::string& factory_tool_name, Fn&& fn)
-    {
-        registerFactory<T>(factory_tool_name, std::forward<Fn>(fn), func_registry::FunctionMetadata{});
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& factory_tool_name, Fn&& fn, ObjectOptions options)
-    {
-        registerFactory<T>(
-            factory_tool_name,
-            std::forward<Fn>(fn),
-            func_registry::FunctionMetadata{},
-            std::string{},
-            std::move(options));
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& factory_tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
-    {
-        registerFactory<T>(factory_tool_name, std::forward<Fn>(fn), std::move(metadata), std::string{}, ObjectOptions{});
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(
-        const std::string& factory_tool_name,
-        Fn&& fn,
-        func_registry::FunctionMetadata metadata,
-        ObjectOptions options)
-    {
-        registerFactory<T>(factory_tool_name, std::forward<Fn>(fn), std::move(metadata), std::string{}, std::move(options));
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(const std::string& factory_tool_name, Fn&& fn, std::string description)
-    {
-        registerFactory<T>(
-            factory_tool_name,
-            std::forward<Fn>(fn),
-            func_registry::FunctionMetadata{{}, std::move(description)},
-            std::string{},
-            ObjectOptions{});
-    }
-
-    template<typename T, typename Fn>
-    void registerFactory(
-        const std::string& factory_tool_name,
-        Fn&& fn,
-        std::string description,
-        ObjectOptions options)
-    {
-        registerFactory<T>(
-            factory_tool_name,
-            std::forward<Fn>(fn),
-            func_registry::FunctionMetadata{{}, std::move(description)},
-            std::string{},
-            std::move(options));
-    }
-
-    template<typename T, typename Fn>
     void registerFactory(
         const std::string& factory_tool_name,
         Fn&& fn,
         func_registry::FunctionMetadata metadata,
         std::string configured_object_type_name,
-        ObjectOptions options = {})
+        ObjectOptions options,
+        ToolSchedulingScope scheduling_scope)
     {
         invoke_adapter_.template registerType<ObjectHandle>();
         runtime_.template registerFactory<T>(
@@ -552,22 +846,14 @@ private:
                     std::forward<decltype(callable)>(callable),
                     std::move(function_metadata));
             });
+        storeToolSchedulingScope(factory_tool_name, scheduling_scope);
     }
 
     template<typename T>
-    void registerDestroy()
-    {
-        registerDestroy<T>(runtime_.template defaultDestroyToolName<T>(), makeDestroyMetadata(defaultDestroyDescription()));
-    }
-
-    template<typename T>
-    void registerDestroy(const std::string& destroy_tool_name)
-    {
-        registerDestroy<T>(destroy_tool_name, makeDestroyMetadata(defaultDestroyDescription()));
-    }
-
-    template<typename T>
-    void registerDestroy(const std::string& destroy_tool_name, func_registry::FunctionMetadata metadata)
+    void registerDestroy(
+        const std::string& destroy_tool_name,
+        func_registry::FunctionMetadata metadata,
+        ToolSchedulingScope scheduling_scope)
     {
         invoke_adapter_.template registerType<ObjectHandle>();
         runtime_.template registerDestroy<T>(
@@ -579,19 +865,24 @@ private:
                     std::forward<decltype(callable)>(callable),
                     std::move(function_metadata));
             });
-    }
-
-    template<typename T>
-    void registerDestroy(const std::string& destroy_tool_name, std::string description)
-    {
-        registerDestroy<T>(destroy_tool_name, makeDestroyMetadata(std::move(description)));
+        storeToolSchedulingScope(destroy_tool_name, scheduling_scope);
     }
 
     template<typename T, typename Fn>
-    void registerStatefulMethod(const std::string& method_tool_name, Fn&& fn, func_registry::FunctionMetadata metadata)
+    void registerStatefulMethod(
+        const std::string& method_tool_name,
+        Fn&& fn,
+        func_registry::FunctionMetadata metadata,
+        ToolSchedulingScope scheduling_scope)
     {
-        static_assert(std::is_member_function_pointer_v<std::decay_t<Fn>>,
-            "registerStatefulMethod requires a member function pointer");
+        using Traits = json_session_invoke::detail::callable_traits_t<Fn>;
+        using ObjectArg = typename Traits::template arg<0>;
+        using ObjectType = std::remove_cv_t<std::remove_reference_t<ObjectArg>>;
+
+        static_assert(Traits::arity >= 1,
+            "registerStatefulMethod requires a callable whose first parameter is the stateful object");
+        static_assert(std::is_same_v<ObjectType, T>,
+            "registerStatefulMethod requires a callable whose first parameter belongs to T");
 
         ensureDirectObjectTypeRegistered<Fn>();
         runtime_.template registerMethod<Fn>(
@@ -607,6 +898,7 @@ private:
             [this](const json& value, std::type_index expected_cpp_type) {
                 return invoke_adapter_.convertFromJson(value, expected_cpp_type);
             });
+            storeToolSchedulingScope(method_tool_name, scheduling_scope);
     }
 
     [[noreturn]] static void throwMemberFunctionRegistrationError()
@@ -690,6 +982,8 @@ private:
     UnderlyingAdapter invoke_adapter_;
     json_session_invoke::detail::BasicStatefulRuntime<EnableThreadSafety> runtime_{};
     StatefulDefaults stateful_defaults_{};
+    mutable std::mutex tool_scheduling_scopes_mutex_;
+    std::unordered_map<std::string, ToolSchedulingScope> tool_scheduling_scopes_;
 };
 
 using JsonSessionInvokeAdapterThreadSafe = BasicJsonSessionInvokeAdapter<true>;

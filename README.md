@@ -2,13 +2,14 @@
 
 `llm_invoke_cpp` is a header-only C++ library for exposing native C++ functions as LLM-callable tools.
 
-It is split into five public modules:
+It is split into six public modules:
 
 - `include/func_registry`: dependency-free function registration, concise function summaries, and runtime dispatch.
 - `include/tool_meta`: optional tool-facing metadata and tool spec export helpers built on top of the registry.
 - `include/type_meta`: optional enum/schema/type-introspection helpers used by tool export and JSON adaptation.
 - `include/json_invoke`: JSON-based invocation on top of the registry, intended for LLM and agent integrations.
 - `include/json_session_invoke`: higher-level session/runtime APIs built on top of `json_invoke` for stateful create/call/destroy flows.
+- `include/task_scheduler`: task classification and scheduling helpers built on top of `json_session_invoke`.
 
 Project layout
 
@@ -27,11 +28,15 @@ Project layout
 - `include/json_invoke/json_traits.hpp`: trait hook for custom JSON bindings.
 - `include/json_session_invoke/json_session_invoke.hpp`: session-oriented adapter that composes `json_invoke` and exposes stateful factory APIs as the high-level entry point.
 - `include/json_session_invoke/session_objects.hpp`: session object handles, object options, JSON/schema bindings, and in-memory object store support.
+- `include/task_scheduler/request_classifier.hpp`: readonly request classification helpers that turn session tool metadata into scheduling categories and object keys.
+- `include/task_scheduler/task_scheduler_facade.hpp`: recommended facade entry point for callers that want to submit one JSON request and let task_scheduler hide classification, queueing, and invocation details.
+- `include/task_scheduler/task_scheduler.hpp`: scheduler-side task abstractions, including a minimal `ITaskScheduler` interface and a keyed scheduler that enforces session-wide and per-object exclusivity.
 - `examples/func_registry/func_registry_demo.cpp`: core-only registry example.
 - `examples/json_invoke/json_invoke_demo.cpp`: JSON invocation example.
 - `examples/json_stateful/json_stateful_demo.cpp`: stateful object-handle example for create/call/destroy flows.
 - `examples/json_tracing/json_tracing_demo.cpp`: tracing example for invoke and object lifecycle events.
 - `examples/trace_recorder/trace_recorder_demo.cpp`: focused `VectorTraceRecorder` example that prints each call's response together with the recorded trace slice for that call.
+- `examples/task_scheduler/task_scheduler_demo.cpp`: task scheduler example that prints classification results together with actual worker admission order for free-read, per-object, factory-lane, and barrier-aware tasks.
 - `examples/json_invoke/person.hpp`: example-only domain type used by the JSON invocation demo.
 - `examples/json_invoke/person_support.hpp`: example-only JSON bindings and helper functions for `Person`.
 - `examples/json_invoke/priority_support.hpp`: example-only enum mapping and incident-priority helper logic used by the JSON invocation demo.
@@ -111,6 +116,7 @@ FetchContent_MakeAvailable(llm_invoke_cpp)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::func_registry)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_invoke)
 target_link_libraries(your_target PRIVATE llm_invoke_cpp::json_session_invoke)
+target_link_libraries(your_target PRIVATE llm_invoke_cpp::task_scheduler)
 ```
 
 API notes
@@ -140,6 +146,12 @@ API notes
 - `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::registerFunction(...)`: also supports plain stateless function registration directly, so one session adapter can host both stateless tools and stateful object lifecycles.
 - `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::registerFunction(...)` intentionally rejects member function pointers; stateful member methods must be registered through `stateful<T>(...).method(...)` so the session boundary stays explicit.
 - `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::stateful<T>(...)`: fluent builder for grouped stateful registration such as `.create(...).method(...).destroy()` while reusing the same underlying session runtime.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::findToolMetadata(...)`: readonly scheduler-facing metadata query that reports execution semantics, the minimal `ToolSchedulingScope` hint, and stateful fields such as `stateful_kind`, `object_type_name`, and `handle_parameter_name` for scheduler-side classification.
+- `json_session_invoke::JsonSessionInvokeAdapterThreadSafe::ToolSchedulingScope`: optional registration-time scope hint for exceptional tools such as global `session_barrier`; finer fallback policies stay inside `task_scheduler` classification logic.
+- `task_scheduler::RequestClassifierThreadSafe`: classifies a JSON request into `FreeReadOnly`, `ObjectExclusive`, `FactoryLane`, `ToolExclusive`, or `SessionBarrier`; default inference uses tool metadata plus handle/object_type extraction, while explicit scheduling hints override the defaults.
+- `task_scheduler::TaskSchedulerFacadeThreadSafe`: recommended one-object facade for higher-level callers; submit one JSON request with `submitRequest(...)`, while classification, keyed queueing, and invocation stay hidden behind the facade.
+- `task_scheduler::ITaskScheduler`: scheduler-side execution interface that accepts a classified `ScheduledTask` and returns a `std::future<json>` without pulling execution policy back into `json_session_invoke`.
+- `task_scheduler::KeyedTaskScheduler`: fixed-worker scheduler implementation that admits the next runnable task from an internal queue, allows `FreeReadOnly` work to run concurrently, serializes `ObjectExclusive` by `object_id`, serializes `FactoryLane` by `object_type`, serializes `ToolExclusive` by `tool_name`, and treats `SessionBarrier` as a stop-the-world session-wide exclusive operation.
 - The fluent builder also supports `.options(...)`, so object type selection and session object options can be expressed separately: `.stateful<T>("counter").options(opts)...`.
 - When `.stateful<T>("counter")` uses `.create(...)` without an explicit tool name, the builder defaults to `create_counter`.
 - If a stateful builder creates an object but omits `.destroy()`, the adapter auto-registers the default `destroy_<object_type>` tool unless `setStatefulDefaults(...)` disables `auto_register_destroy`.
@@ -208,6 +220,7 @@ ctest --test-dir build --output-on-failure
 .\build\json_stateful_demo.exe
 .\build\json_tracing_demo.exe
 .\build\trace_recorder_demo.exe
+.\build\task_scheduler_demo.exe
 ```
 
 The initial configure step downloads `nlohmann/json` into `build/_deps/` through `FetchContent`.
